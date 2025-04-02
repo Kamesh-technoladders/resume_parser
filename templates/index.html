@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resume Parser Logs</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f4f4f4;
+        }
+        h1 {
+            color: #333;
+        }
+        #log-container {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        .log-entry {
+            margin-bottom: 10px;
+            padding: 10px;
+            border-left: 4px solid #007bff;
+            background-color: #f9f9f9;
+        }
+        .log-entry.error {
+            border-left-color: #dc3545;
+        }
+        .log-step {
+            font-weight: bold;
+            color: #007bff;
+        }
+        .log-message {
+            margin-left: 10px;
+        }
+        .log-data {
+            margin-left: 20px;
+            font-size: 0.9em;
+            color: #555;
+        }
+        #job-id-input {
+            padding: 5px;
+            margin-right: 10px;
+        }
+        button {
+            padding: 5px 10px;
+            background-color: #007bff;
+            color: #fff;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h1>Resume Parser Logs</h1>
+    <div>
+        <input type="text" id="job-id-input" placeholder="Enter Job ID">
+        <button onclick="fetchLogs()">Fetch Logs</button>
+    </div>
+    <div id="log-container"></div>
+
+    <script>
+        async function fetchLogs() {
+            const jobId = document.getElementById('job-id-input').value.trim();
+            if (!jobId) {
+                alert('Please enter a Job ID');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/job-logs/${jobId}`);
+                const data = await response.json();
+
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    return;
+                }
+
+                const logContainer = document.getElementById('log-container');
+                logContainer.innerHTML = '';
+
+                data.logs.forEach(log => {
+                    const logEntry = document.createElement('div');
+                    logEntry.className = 'log-entry';
+                    if (log.step === 'error') {
+                        logEntry.classList.add('error');
+                    }
+
+                    const step = document.createElement('span');
+                    step.className = 'log-step';
+                    step.textContent = log.step;
+                    logEntry.appendChild(step);
+
+                    const message = document.createElement('span');
+                    message.className = 'log-message';
+                    message.textContent = `: ${log.message}`;
+                    logEntry.appendChild(message);
+
+                    const dataDiv = document.createElement('div');
+                    dataDiv.className = 'log-data';
+                    for (const [key, value] of Object.entries(log.data)) {
+                        const p = document.createElement('p');
+                        p.textContent = `${key}: ${value}`;
+                        dataDiv.appendChild(p);
+                    }
+                    logEntry.appendChild(dataDiv);
+
+                    logContainer.appendChild(logEntry);
+                });
+            } catch (error) {
+                alert('Error fetching logs: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html>

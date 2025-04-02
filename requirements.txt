@@ -1,0 +1,26 @@
+# Web framework and CORS
+flask==2.3.3
+flask-cors==4.0.1
+
+# Supabase client
+supabase==2.8.1
+
+# OCR and image processing
+pdf2image==1.17.0
+pytesseract==0.3.10
+
+# Gemini API
+google-generativeai==0.8.2
+
+# PDF generation
+reportlab==4.2.2
+
+# Retry logic
+tenacity==9.0.0
+
+# Environment variable loading
+python-dotenv==1.0.1
+
+# Queueing
+rq==1.16.2
+redis==5.0.8

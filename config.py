@@ -31,3 +31,6 @@ gemini_model = GenerativeModel("gemini-1.5-pro")
 # Initialize Redis and RQ queue
 redis_conn = Redis(host='redis', port=6379)
 queue = Queue(connection=redis_conn)
+
+# redis_conn = Redis(host='localhost', port=6379)
+# queue = Queue(connection=redis_conn)

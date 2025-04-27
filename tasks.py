@@ -1198,9 +1198,24 @@ def sanitize_text(text: str) -> str:
     # Use json.dumps to escape special characters, remove outer quotes
     return json.dumps(text)[1:-1]
 
-# Helper function to clean Gemini AI output
 def clean_gemini_output(text: str) -> str:
-    return text.strip()
+    text = text.strip()
+    # Remove code fences
+    if text.startswith('```json'):
+        text = text[7:].rstrip('```')
+    elif text.startswith('```'):
+        text = text[3:].rstrip('```')
+    text = text.strip()
+    # Extract JSON object between { and }
+    start = text.find('{')
+    end = text.rfind('}')
+    if start != -1 and end != -1 and end > start:
+        text = text[start:end+1]
+    else:
+        raise ValueError("No valid JSON object found in Gemini response")
+    # Remove control characters
+    text = re.sub(r'[\x00-\x1F\x7F]', '', text)
+    return text
 
 # Helper function to generate the report using Gemini API
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))

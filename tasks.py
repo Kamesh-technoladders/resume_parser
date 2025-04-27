@@ -1460,6 +1460,7 @@ def upload_report(report_path: str, destination_path: str):
 
 # Background task to process the analysis
 def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_description: str):
+    logger.info("Starting process_analysis for job_id: %s, candidate_id: %s", job_id, candidate_id)
     local_resume_path = None
     local_report_path = None
     try:

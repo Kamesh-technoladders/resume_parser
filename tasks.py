@@ -1937,7 +1937,7 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
         log_progress(job_id, "save_report", "Saving report as PDF")
         report_filename = f"report_{job_id}_{candidate_id}.pdf"
         local_report_path = f"/tmp/{report_filename}"
-        save_report_as_pdf(report, local_report_path) # Pass report dict and output path
+        save_report_as_pdf(report, local_report_path, job_id) # Pass report dict and output path
         log_progress(job_id, "save_report", "Report saved successfully", {
             "local_report_path": local_report_path
         })

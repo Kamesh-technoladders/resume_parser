@@ -1083,7 +1083,12 @@
 #             log_progress(job_id, "cleanup_error", f"Failed to clean up temporary files: {str(e)}")
 
 
-
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, PageBreak, KeepTogether
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+from reportlab.lib.units import inch
+from reportlab.lib import colors
+import io
 import os
 import json
 import re
@@ -1106,6 +1111,90 @@ from config import gemini_model, supabase, SUPABASE_STORAGE_BUCKET, SUPABASE_REP
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# --- Define Styles (Can be done outside the function for reuse) ---
+styles = getSampleStyleSheet()
+
+# Custom Styles - Refined for Appeal
+styles.add(ParagraphStyle(name='ReportTitle',
+                          parent=styles['h1'],
+                          alignment=TA_CENTER,
+                          fontSize=20,
+                          spaceBottom=24,
+                          textColor=colors.HexColor('#3A0CA3'))) # Deep Purple Title
+
+styles.add(ParagraphStyle(name='SectionHeading',
+                          parent=styles['h2'],
+                          fontSize=14,
+                          spaceBefore=16,
+                          spaceAfter=8,
+                          textColor=colors.HexColor('#4361EE'), # Royal Blue Heading
+                          alignment=TA_LEFT))
+
+styles.add(ParagraphStyle(name='SubHeading',
+                          parent=styles['h3'],
+                          fontSize=11,
+                          spaceBefore=10,
+                          spaceAfter=5,
+                          textColor=colors.HexColor('#480CA8'), # Another Purple Shade
+                          fontName='Helvetica-Bold',
+                          alignment=TA_LEFT))
+
+styles.add(ParagraphStyle(name='Body',
+                          parent=styles['Normal'],
+                          alignment=TA_LEFT,
+                          fontSize=10,
+                          leading=14, # Line spacing
+                          textColor=colors.darkslategray))
+
+styles.add(ParagraphStyle(name='ListItem',
+                          parent=styles['Body'],
+                          leftIndent=20,
+                          spaceBefore=2,
+                          spaceAfter=2)) # For bullet points
+
+styles.add(ParagraphStyle(name='ScoreHighlight',
+                          parent=styles['Normal'],
+                          alignment=TA_RIGHT,
+                          fontSize=22, # Larger score
+                          fontName='Helvetica-Bold',
+                          textColor=colors.HexColor('#3A0CA3'))) # Match title color
+
+styles.add(ParagraphStyle(name='ScoreLabel',
+                          parent=styles['Normal'],
+                          alignment=TA_LEFT,
+                          fontSize=12,
+                          fontName='Helvetica-Bold',
+                          textColor=colors.HexColor('#4361EE'))) # Match heading color
+
+styles.add(ParagraphStyle(name='TableHeader',
+                           parent=styles['Normal'],
+                           fontName='Helvetica-Bold',
+                           fontSize=9,
+                           alignment=TA_LEFT,
+                           textColor=colors.white))
+
+styles.add(ParagraphStyle(name='TableCell',
+                           parent=styles['Normal'],
+                           fontSize=9,
+                           leading=11))
+
+styles.add(ParagraphStyle(name='WatermarkStyle', # Can be reused if needed elsewhere
+                          parent=styles['Normal'],
+                          alignment=TA_RIGHT,
+                          fontSize=8,
+                          textColor=colors.Color(0,0,0, alpha=0.15))) # Faint watermark
+
+# --- Watermark Function ---
+def add_watermark(canvas, doc):
+    """Adds 'hrumbles.ai' watermark to each page."""
+    canvas.saveState()
+    canvas.setFont('Helvetica', 8)
+    canvas.setFillColor(colors.Color(0,0,0, alpha=0.15)) # Faint color
+    # Position in top-right corner
+    canvas.drawRightString(doc.pagesize[0] - 0.5*inch, doc.pagesize[1] - 0.5*inch, "hrumbles.ai")
+    canvas.restoreState()
+
 
 # Function to log progress and store in Redis
 def log_progress(job_id: str, step: str, message: str, data: dict = None):
@@ -1485,125 +1574,249 @@ Use symbols: ✅ for 'yes', ⚠️ for 'partial', ❌ for 'no'. IMPORTANT: Ensur
         # Re-raise the exception for the retry mechanism
         raise Exception(f"Failed to generate report at step '{current_step}': {str(e)}") from e
 
-# Helper function to save report as PDF
-def save_report_as_pdf(report: dict, output_path: str):
+# --- UPDATED save_report_as_pdf using Platypus for Visual Appeal ---
+def save_report_as_pdf(report: dict, output_path: str, job_id: str): # Added job_id for logging
     try:
-        c = canvas.Canvas(output_path, pagesize=letter)
-        width, height = letter
-        left_margin, right_margin, top_margin, bottom_margin = 72, 72, 72, 72
-        text_width = width - left_margin - right_margin
-        y_position = height - top_margin
+        log_progress(job_id, "pdf_generation_start", "Starting PDF generation with Platypus")
+        doc = SimpleDocTemplate(output_path, pagesize=letter,
+                                leftMargin=0.75*inch, rightMargin=0.75*inch,
+                                topMargin=1.0*inch, bottomMargin=0.75*inch)
+        story = []
+        bullet = '•' # Bullet character
 
-        def add_text(text, y, bold=False, indent=0):
-            nonlocal y_position
-            if y_position < bottom_margin:
-                c.showPage()
-                y_position = height - top_margin
+        # --- Build Story (Content) ---
 
-            text_object = c.beginText(left_margin + indent, y_position)
-            c.setFont("Helvetica-Bold" if bold else "Helvetica", 12)
+        # 1. Report Title
+        story.append(Paragraph("Resume Analysis Report", styles['ReportTitle']))
 
-            words = text.split()
-            current_line = []
-            for word in words:
-                test_line = " ".join(current_line + [word])
-                if c.stringWidth(test_line, "Helvetica" if not bold else "Helvetica-Bold", 12) <= text_width - indent:
-                    current_line.append(word)
-                else:
-                    text_object.textLine(" ".join(current_line))
-                    y_position -= 15
-                    if y_position < bottom_margin:
-                        c.drawText(text_object)
-                        c.showPage()
-                        y_position = height - top_margin
-                        text_object = c.beginText(left_margin + indent, y_position)
-                        c.setFont("Helvetica" if not bold else "Helvetica-Bold", 12)
-                    current_line = [word]
-            if current_line:
-                text_object.textLine(" ".join(current_line))
-                y_position -= 15
+        # 2. Candidate Details Table
+        story.append(Paragraph("Candidate Details", styles['SectionHeading']))
+        candidate_data = [
+            [Paragraph("<b>Name:</b>", styles['TableCell']), Paragraph(report.get('candidate_name', 'N/A'), styles['TableCell'])],
+            [Paragraph("<b>Email:</b>", styles['TableCell']), Paragraph(report.get('email', 'N/A'), styles['TableCell'])],
+            [Paragraph("<b>Phone:</b>", styles['TableCell']), Paragraph(report.get('phone_number', 'N/A'), styles['TableCell'])],
+            [Paragraph("<b>LinkedIn:</b>", styles['TableCell']), Paragraph(report.get('linkedin', 'N/A'), styles['TableCell'])],
+            [Paragraph("<b>GitHub:</b>", styles['TableCell']), Paragraph(report.get('github', 'N/A'), styles['TableCell'])],
+        ]
+        candidate_table = Table(candidate_data, colWidths=[1.2*inch, 5.8*inch])
+        candidate_table.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ]))
+        story.append(candidate_table)
+        story.append(Spacer(1, 0.25*inch))
 
-            c.drawText(text_object)
+        # 3. Overall Score (Highlighted Box)
+        score_data = [[
+            Paragraph("Overall Match Score", styles['ScoreLabel']),
+            Paragraph(f"{report.get('overall_match_score', 0)}%", styles['ScoreHighlight'])
+        ]]
+        score_table = Table(score_data, colWidths=[5*inch, 2*inch])
+        score_table.setStyle(TableStyle([
+             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+             ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F0F3FF')), # Light Blue/Lavender background
+             ('LEFTPADDING', (0, 0), (0, 0), 12),
+             ('RIGHTPADDING', (1, 0), (1, 0), 12),
+             ('TOPPADDING', (0, 0), (-1, -1), 10),
+             ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+             # ('ROUNDEDCORNERS', (0, 0), (-1,-1), 6), # Requires reportlab >= 3.6, uncomment if available
+             ('LINEBELOW', (0,0), (-1,0), 1, colors.HexColor('#4361EE')), # Underline below score box
+        ]))
+        story.append(score_table)
+        story.append(Spacer(1, 0.25*inch))
 
-        # Title
-        add_text("Resume Analysis Report", y_position, bold=True)
-        y_position -= 20
+        # 4. Overall Summary
+        story.append(Paragraph("Overall Summary", styles['SectionHeading']))
+        story.append(Paragraph(report.get('summary', "N/A"), styles['Body']))
+        story.append(Spacer(1, 0.25*inch))
 
-        # Candidate Details
-        add_text("Candidate Details", y_position, bold=True)
-        add_text(f"- Name: {report.get('candidate_name', 'Unknown')}", y_position, indent=10)
-        add_text(f"- Email: {report.get('email', '')}", y_position, indent=10)
-        add_text(f"- PhoneNumber: {report.get('phone_number', '')}", y_position, indent=10)
-        add_text(f"- LinkedIn: {report.get('linkedin', '')}", y_position, indent=10)
-        add_text(f"- GitHub: {report.get('github', '')}", y_position, indent=10)
-        y_position -= 20
+        # 5. Skills Analysis (Side-by-side Table)
+        story.append(Paragraph("Skills Overview", styles['SectionHeading']))
 
-        # Overall Score
-        add_text("Overall Match Score", y_position, bold=True)
-        add_text(f"{report.get('overall_match_score', 0)}/100", y_position, indent=10)
-        y_position -= 20
-        
-         # Summary
-        add_text("Summary", y_position, bold=True)
-        add_text(report.get('summary', ""), y_position, indent=10)
-        y_position -= 20
+        top_skills_list = report.get("top_skills", [])
+        missed_skills_list = report.get("missing_or_weak_areas", [])
+
+        # Create Paragraph lists for each cell
+        top_skills_flowables = [Paragraph("<b>Top Skills</b>", styles['SubHeading'])]
+        if top_skills_list:
+            for skill in top_skills_list:
+                top_skills_flowables.append(Paragraph(f"{bullet} {skill}", styles['ListItem']))
+        else:
+            top_skills_flowables.append(Paragraph("N/A", styles['Body']))
+
+        missed_skills_flowables = [Paragraph("<b>Missed / Weak Areas</b>", styles['SubHeading'])]
+        if missed_skills_list:
+            for area in missed_skills_list:
+                missed_skills_flowables.append(Paragraph(f"{bullet} {area}", styles['ListItem']))
+        else:
+             missed_skills_flowables.append(Paragraph("N/A", styles['Body']))
+
+        # Add KeepTogether to try and keep skill lists from breaking across pages awkwardly
+        skills_data = [[KeepTogether(top_skills_flowables), KeepTogether(missed_skills_flowables)]]
+
+        skills_table = Table(skills_data, colWidths=[3.5*inch, 3.5*inch])
+        skills_table.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#D9E2FF')), # Light blue border
+            # ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.lightgrey), # Optional inner line
+            ('LEFTPADDING', (0, 0), (-1, -1), 12),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+            ('TOPPADDING', (0, 0), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ]))
+        story.append(skills_table)
+        story.append(Spacer(1, 0.25*inch))
 
 
-        # Matched Skills
-        add_text("Matched Skills", y_position, bold=True)
-        for skill in report.get("matched_skills", []):
-            status = {"yes": "✅", "partial": "⚠️", "no": "❌"}.get(skill.get("matched", "no"))
-            add_text(f"- {skill.get('requirement', '')}: {status} {skill.get('details', '')}", y_position, indent=10)
-        y_position -= 20
+        # 6. Matched Skills (Detailed Table)
+        story.append(Paragraph("Detailed Skill Match", styles['SectionHeading']))
+        matched_skills_list = report.get("matched_skills", [])
+        if matched_skills_list:
+            matched_skills_data = [[
+                Paragraph("Requirement", styles['TableHeader']),
+                Paragraph("Match", styles['TableHeader']),
+                Paragraph("Evidence / Details", styles['TableHeader'])
+            ]]
+            status_map = {"yes": "✅ Yes", "partial": "⚠️ Partial", "no": "❌ No"}
+            for skill in matched_skills_list:
+                status = status_map.get(skill.get("matched", "no"), "❓")
+                req = Paragraph(skill.get('requirement', 'N/A'), styles['TableCell'])
+                det = Paragraph(skill.get('details', 'N/A'), styles['TableCell'])
+                matched_skills_data.append([req, Paragraph(status, styles['TableCell']), det])
+
+            matched_table = Table(matched_skills_data, colWidths=[2.5*inch, 0.8*inch, 3.7*inch])
+            matched_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4361EE')), # Header background
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('TOPPADDING', (0, 0), (-1, 0), 6),
+                # Alternating row colors
+                # ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F0F3FF')]),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                ('LEFTPADDING', (0, 0), (-1, -1), 6),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+                ('TOPPADDING', (0, 1), (-1, -1), 4), # Padding for data rows
+                ('BOTTOMPADDING', (0, 1), (-1, -1), 4),
+            ]))
+            story.append(matched_table)
+        else:
+            story.append(Paragraph("No detailed skill matching data available.", styles['Body']))
+        story.append(Spacer(1, 0.25*inch))
 
 
-        # Companies
-        add_text("Companies", y_position, bold=True)
-        for company in report.get("companies", []):
-            add_text(f"- {company.get('name', '')}: {company.get('designation', '-')}, {company.get('years', '-')}", y_position, indent=10)
-        y_position -= 20
+        # 7. Companies Mentioned
+        story.append(Paragraph("Companies Mentioned", styles['SectionHeading']))
+        companies_list = report.get("companies", [])
+        if companies_list:
+             company_items = []
+             for company in companies_list:
+                 name = company.get('name', 'N/A')
+                 des = company.get('designation', '-')
+                 yrs = company.get('years', '-')
+                 company_items.append(Paragraph(f"{bullet} {name} ({des}, {yrs})", styles['ListItem']))
+             story.extend(company_items) # Add list items to story
+        else:
+             story.append(Paragraph("N/A", styles['Body']))
+        story.append(Spacer(1, 0.25*inch))
 
-        # Missing or Weak Areas
-        add_text("Missing or Weak Areas", y_position, bold=True)
-        for area in report.get("missing_or_weak_areas", []):
-            add_text(f"- {area}", y_position, indent=10)
-        y_position -= 20
+        # 8. Development Gaps
+        story.append(Paragraph("Development Gaps", styles['SectionHeading']))
+        gaps_list = report.get("development_gaps", [])
+        if gaps_list:
+            gap_items = []
+            for gap in gaps_list:
+                 gap_items.append(Paragraph(f"{bullet} {gap}", styles['ListItem']))
+            story.extend(gap_items)
+        else:
+            story.append(Paragraph("N/A", styles['Body']))
+        story.append(Spacer(1, 0.25*inch))
 
-        # Top Skills
-        add_text("Top Skills", y_position, bold=True)
-        for skill in report.get("top_skills", []):
-            add_text(f"- {skill}", y_position, indent=10)
-        y_position -= 20
+        # 9. Additional Certifications
+        story.append(Paragraph("Additional Certifications", styles['SectionHeading']))
+        certs_list = report.get("additional_certifications", [])
+        if certs_list:
+            cert_items = []
+            for cert in certs_list:
+                 cert_items.append(Paragraph(f"{bullet} {cert}", styles['ListItem']))
+            story.extend(cert_items)
+        else:
+            story.append(Paragraph("N/A", styles['Body']))
+        story.append(Spacer(1, 0.25*inch))
 
-        # Development Gaps
-        add_text("Development Gaps", y_position, bold=True)
-        for gap in report.get("development_gaps", []):
-            add_text(f"- {gap}", y_position, indent=10)
-        y_position -= 20
 
-        # Additional Certifications
-        add_text("Additional Certifications", y_position, bold=True)
-        for cert in report.get("additional_certifications", []):
-            add_text(f"- {cert}", y_position, indent=10)
-        y_position -= 20
+        # 10. Section-Wise Scoring (Improved Table Layout)
+        story.append(Paragraph("Section-Wise Scoring", styles['SectionHeading']))
+        scoring_list = report.get("section_wise_scoring", [])
+        if scoring_list:
+            scoring_data = [[
+                Paragraph("Section", styles['TableHeader']),
+                Paragraph("Sub-Section", styles['TableHeader']),
+                Paragraph("Score", styles['TableHeader']),
+                Paragraph("Remarks", styles['TableHeader']),
+            ]]
+            for section in scoring_list:
+                sec_name = section.get('section', 'N/A')
+                sec_weight = section.get('weightage', 0)
+                first_row_for_section = True
+                for submenu in section.get("submenus", []):
+                    sub_name = submenu.get('submenu', 'N/A')
+                    sub_score = submenu.get('score', 0)
+                    sub_rem = submenu.get('remarks', '')
+                    # Display main section only on the first row of its submenus
+                    section_display = Paragraph(f"<b>{sec_name}</b><br/>({sec_weight}%)", styles['TableCell']) if first_row_for_section else ""
+                    scoring_data.append([
+                         section_display,
+                         Paragraph(sub_name, styles['TableCell']),
+                         Paragraph(f"{sub_score}/10", styles['TableCell']),
+                         Paragraph(sub_rem, styles['TableCell'])
+                    ])
+                    first_row_for_section = False # Only show main section name once
 
-        # Section-Wise Scoring
-        add_text("Section-Wise Scoring", y_position, bold=True)
-        for section in report.get("section_wise_scoring", []):
-            add_text(f"- {section.get('section', '')} (Weightage: {section.get('weightage', 0)}%)", y_position, indent=10)
-            for submenu in section.get("submenus", []):
-                add_text(
-                    f"  - {submenu.get('submenu', '')}: Score {submenu.get('score', 0)}/10, "
-                    f"Remarks: {submenu.get('remarks', '')}",
-                    y_position, indent=20
-                )
-            y_position -= 10
-        y_position -= 20
+            scoring_table = Table(scoring_data, colWidths=[1.5*inch, 1.7*inch, 0.8*inch, 3.0*inch])
+            scoring_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4361EE')), # Header background
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('TOPPADDING', (0, 0), (-1, 0), 6),
+                # ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F0F3FF')]),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                ('LEFTPADDING', (0, 0), (-1, -1), 6),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+                ('TOPPADDING', (0, 1), (-1, -1), 4), # Padding for data rows
+                ('BOTTOMPADDING', (0, 1), (-1, -1), 4),
+                # Span the Section cell across rows if needed (more complex)
+            ]))
+            story.append(scoring_table)
+        else:
+            story.append(Paragraph("N/A", styles['Body']))
+        story.append(Spacer(1, 0.25*inch))
 
-        c.save()
+
+        # --- Build the PDF ---
+        log_progress(job_id, "pdf_generation_build", "Building PDF document with Platypus")
+        doc.build(story, onFirstPage=add_watermark, onLaterPages=add_watermark)
+        log_progress(job_id, "pdf_generation_success", "PDF generated successfully")
+
     except Exception as e:
-        raise Exception(f"Failed to save report as PDF: {str(e)}")
+        tb_str = traceback.format_exc()
+        logger.error(f"Job {job_id} - Failed to save report as PDF: {str(e)}")
+        logger.error(f"Job {job_id} - Traceback:\n{tb_str}")
+        log_progress(job_id, "pdf_generation_error", f"Failed to save report as PDF: {str(e)}", {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "traceback": tb_str
+        })
+        raise Exception(f"Failed to save report as PDF: {str(e)}") from e
 
+# END OF NEW save_report_as_pdf FUNCTION
 # Helper function to upload report to Supabase Storage
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def upload_report(report_path: str, destination_path: str, job_id: str):

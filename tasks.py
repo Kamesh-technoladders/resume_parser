@@ -1215,6 +1215,9 @@ def clean_gemini_output(text: str) -> str:
         raise ValueError("No valid JSON object found in Gemini response")
     # Remove control characters
     text = re.sub(r'[\x00-\x1F\x7F]', '', text)
+    # Escape unescaped curly braces in string values
+    text = re.sub(r'([^\\])\{', r'\1\\{', text)
+    text = re.sub(r'([^\\])\}', r'\1\\}', text)
     return text
 
 # Helper function to generate the report using Gemini API
@@ -1302,7 +1305,7 @@ Use symbols: ✅ for 'yes', ⚠️ for 'partial', ❌ for 'no'. Return ONLY the 
         try:
             report = json.loads(gemini_output)
         except json.JSONDecodeError as e:
-            log_progress("debug", "generate_report_error", f"Failed to parse JSON: {str(e)}, raw_output: {gemini_output[:1000]}")
+            log_progress("debug", "generate_report_error", f"Failed to parse JSON: {str(e)}, raw_output: {gemini_output[:1000]},cleaned_output: {gemini_output[:1000]}")
             raise Exception(f"Invalid JSON response from Gemini: {str(e)}")
 
         # Validate required fields

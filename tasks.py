@@ -1654,8 +1654,8 @@ def save_report_as_pdf(report: dict, output_path: str, job_id: str): # Added job
              missed_skills_flowables.append(Paragraph("N/A", styles['Body']))
 
         # Add KeepTogether to try and keep skill lists from breaking across pages awkwardly
-        skills_data = [[KeepTogether(top_skills_flowables), KeepTogether(missed_skills_flowables)]]
-
+        skills_data = [[top_skills_flowables, missed_skills_flowables]]
+        
         skills_table = Table(skills_data, colWidths=[3.5*inch, 3.5*inch])
         skills_table.setStyle(TableStyle([
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),

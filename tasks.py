@@ -1728,7 +1728,7 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
         log_progress(job_id, "save_candidate_resume_analysis", "Upserting candidate_resume_analysis")
         response = supabase.table("candidate_resume_analysis").upsert(
             resume_payload,
-            options={"on_conflict": ["job_id", "candidate_id"]}
+            on_conflict = "job_id, candidate_id"
         ).execute()
         if not response.data:
             raise Exception("Failed to upsert candidate_resume_analysis")
@@ -1772,7 +1772,7 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
             log_progress(job_id, "save_candidate_companies", "Upserting candidate_companies")
             company_response = supabase.table("candidate_companies").upsert(
                 company_entries,
-                options={"on_conflict": ["candidate_id", "job_id", "company_id"]}
+                on_conflict = "candidate_id, job_id, company_id"
             ).execute()
             if not company_response.data:
                 raise Exception("Failed to upsert candidate_companies")

@@ -1097,6 +1097,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 import pytesseract
 from docx import Document
 import textract
+import ast
 
 # Import shared objects from config.py
 from config import gemini_model, supabase, SUPABASE_STORAGE_BUCKET, SUPABASE_REPORT_PATH_PREFIX, redis_conn
@@ -1198,6 +1199,7 @@ def sanitize_text(text: str) -> str:
     # Use json.dumps to escape special characters, remove outer quotes
     return json.dumps(text)[1:-1]
 
+# Helper function to clean Gemini AI output
 def clean_gemini_output(text: str) -> str:
     text = text.strip()
     # Remove code fences
@@ -1218,6 +1220,10 @@ def clean_gemini_output(text: str) -> str:
     # Escape unescaped curly braces in string values
     text = re.sub(r'([^\\])\{', r'\1\\{', text)
     text = re.sub(r'([^\\])\}', r'\1\\}', text)
+    # Remove trailing commas before } or ]
+    text = re.sub(r',\s*([}\]])', r'\1', text)
+    # Replace unquoted keys with quoted keys
+    text = re.sub(r'([{,]\s*)(\w+)(:)', r'\1"\2"\3', text)
     return text
 
 # Helper function to generate the report using Gemini API
@@ -1298,7 +1304,8 @@ Use symbols: ✅ for 'yes', ⚠️ for 'partial', ❌ for 'no'. Return ONLY the 
 
         # Log Gemini's raw output for debugging
         log_progress("debug", "generate_report_output", "Gemini response", {
-            "raw_output": gemini_output[:1000]
+            "raw_output": gemini_output[:1000], 
+            "cleaned_output": gemini_output[:1000]
         })
 
         # Parse JSON response
@@ -1306,7 +1313,14 @@ Use symbols: ✅ for 'yes', ⚠️ for 'partial', ❌ for 'no'. Return ONLY the 
             report = json.loads(gemini_output)
         except json.JSONDecodeError as e:
             log_progress("debug", "generate_report_error", f"Failed to parse JSON: {str(e)}, raw_output: {gemini_output[:1000]},cleaned_output: {gemini_output[:1000]}")
-            raise Exception(f"Invalid JSON response from Gemini: {str(e)}")
+            try:
+                # Fallback: Use ast.literal_eval for malformed JSON
+                report = ast.literal_eval(gemini_output)
+                if not isinstance(report, dict):
+                    raise ValueError("Fallback parsing did not yield a dictionary")
+            except (ValueError, SyntaxError) as fallback_e:
+                log_progress("debug", "generate_report_error", f"Fallback parsing failed: {str(fallback_e)}, raw_output: {response.text[:1000]}, cleaned_output: {gemini_output[:1000]}")
+                raise Exception(f"Invalid JSON response from Gemini: {str(e)}")
 
         # Validate required fields
         required_fields = [

@@ -1792,7 +1792,7 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
         try:
             candidate_response = supabase.table("hr_job_candidates").update(
                 {"has_validated_resume": True} # Set to True
-            ).eq("job_id", job_id).eq("candidate_id", candidate_id).execute()
+            ).eq("job_id", job_id).eq("candidate_id", candidate_id).execute(returning='minimal')
 
             # Log the response, but don't fail based on .data
             log_progress(job_id, "update_hr_job_candidates_response", "Supabase response for hr_job_candidates update", {

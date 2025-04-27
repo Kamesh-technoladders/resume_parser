@@ -1199,31 +1199,42 @@ def sanitize_text(text: str) -> str:
     # Use json.dumps to escape special characters, remove outer quotes
     return json.dumps(text)[1:-1]
 
-# Helper function to clean Gemini AI output
 def clean_gemini_output(text: str) -> str:
     text = text.strip()
-    # Remove code fences
+    # Remove code fences (common issue)
     if text.startswith('```json'):
         text = text[7:].rstrip('```')
     elif text.startswith('```'):
         text = text[3:].rstrip('```')
     text = text.strip()
-    # Extract JSON object between { and }
+
+    # Extract JSON object between the first { and the last }
+    # This helps if Gemini adds introductory/closing text despite the prompt
     start = text.find('{')
     end = text.rfind('}')
     if start != -1 and end != -1 and end > start:
         text = text[start:end+1]
     else:
-        raise ValueError("No valid JSON object found in Gemini response")
-    # Remove control characters
+        # If no '{' or '}' found, return original text - maybe it's an error message?
+        # Or raise an error if you expect JSON always
+         log_progress("debug", "clean_gemini_output_warning", "No JSON object markers ({}) found in text", {"text_preview": text[:200]})
+         # Depending on requirements, you might raise ValueError("No valid JSON object markers found") here
+         pass # Let json.loads handle it, might be valid JSON without {} if simple value
+
+    # Remove common control characters (safer)
     text = re.sub(r'[\x00-\x1F\x7F]', '', text)
-    # Escape unescaped curly braces in string values
-    text = re.sub(r'([^\\])\{', r'\1\\{', text)
-    text = re.sub(r'([^\\])\}', r'\1\\}', text)
-    # Remove trailing commas before } or ]
+
+    # Remove trailing commas before } or ] (relatively safe)
     text = re.sub(r',\s*([}\]])', r'\1', text)
-    # Replace unquoted keys with quoted keys
-    text = re.sub(r'([{,]\s*)(\w+)(:)', r'\1"\2"\3', text)
+
+    # --- REMOVE OR COMMENT OUT THESE FRAGILE REGEXES ---
+    # # Escape unescaped curly braces in string values (TOO RISKY/FRAGILE)
+    # text = re.sub(r'([^\\])\{', r'\1\\{', text)
+    # text = re.sub(r'([^\\])\}', r'\1\\}', text)
+    # # Replace unquoted keys with quoted keys (TOO RISKY/FRAGILE)
+    # text = re.sub(r'([{,]\s*)(\w+)(:)', r'\1"\2"\3', text)
+    # --- END OF REMOVAL ---
+
     return text
 
 # Helper function to generate the report using Gemini API
@@ -1296,10 +1307,17 @@ For companies:
 - If years are not specified, use "-".
 - Example: "Senior Developer at TCS, 2019 - 2022" becomes { "name": "TCS", "designation": "Senior Developer", "years": "2019 - 2022" }
 
-Use symbols: ✅ for 'yes', ⚠️ for 'partial', ❌ for 'no'. Return ONLY the JSON object.
+Use symbols: ✅ for 'yes', ⚠️ for 'partial', ❌ for 'no'. IMPORTANT: Ensure the output is ONLY a single, valid JSON object. All string values within the JSON must be properly escaped according to JSON standards (e.g., use \\" for quotes inside strings, \\\\ for backslashes, etc.). Do NOT include any explanatory text before or after the JSON object.
 """.format(job_description=sanitized_job_desc, resume_text=sanitized_resume)
 
         response = gemini_model.generate_content(prompt)
+        raw_gemini_text = response.text # Get the raw text
+
+        # *** ADD THIS LOGGING ***
+        log_progress("debug", "generate_report_raw_output", "Raw Gemini response received", {
+            "raw_output_preview": raw_gemini_text[:2000] # Log a significant chunk
+        })
+        
         gemini_output = clean_gemini_output(response.text)
 
         # Log Gemini's raw output for debugging

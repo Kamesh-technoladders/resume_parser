@@ -1086,6 +1086,7 @@
 
 import os
 import json
+import re
 import logging
 import datetime
 from pdf2image import convert_from_path
@@ -1458,6 +1459,18 @@ def upload_report(report_path: str, destination_path: str):
         log_progress("upload_error", f"Failed to upload report to Supabase: {str(e)}")
         raise Exception(f"Failed to upload report to Supabase: {str(e)}")
 
+# Helper function to normalize company names
+def normalize_company_name(name: str) -> str:
+    """Normalize company name by converting to lowercase and removing common suffixes."""
+    if not name:
+        return ""
+    # Convert to lowercase and strip whitespace
+    normalized = name.lower().strip()
+    # Remove common suffixes (ltd, limited, inc, etc.)
+    normalized = re.sub(r'\s*(ltd|limited|inc|corp|corporation|llc|co)\.?\s*$', '', normalized, flags=re.IGNORECASE)
+    # Remove punctuation
+    normalized = re.sub(r'[^\w\s]', '', normalized)
+    return normalized
 # Background task to process the analysis
 def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_description: str):
     logger.info("Starting process_analysis for job_id: %s, candidate_id: %s", job_id, candidate_id)
@@ -1573,13 +1586,18 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
         # Step 4: Save and check company associations in candidate_companies
         company_entries = []
         for company in report.get("companies", []):
-            # Check if company exists
-            company_response = supabase.table("companies").select("id").eq("name", company["name"]).execute()
+            # Normalize company name
+            normalized_name = normalize_company_name(company["name"])
+            # Check if company exists by normalized_name
+            company_response = supabase.table("companies").select("id").eq("normalized_name", normalized_name).execute()
             if company_response.data:
                 company_id = company_response.data[0]["id"]
             else:
-                # Insert new company
-                new_company = supabase.table("companies").insert({"name": company["name"]}).execute()
+                # Insert new company with normalized_name
+                new_company = supabase.table("companies").insert({
+                    "name": company["name"],
+                    "normalized_name": normalized_name
+                }).execute()
                 if not new_company.data:
                     raise Exception(f"Failed to insert company: {company['name']}")
                 company_id = new_company.data[0]["id"]
@@ -1605,11 +1623,13 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
 
     except Exception as e:
         log_progress(job_id, "error", f"Task failed: {str(e)}")
-        # Update status to failed in candidate_resume_analysis and hr_job_candidates if record exists
-        existing_record = supabase.table("candidate_resume_analysis").select("candidate_id").eq("job_id", job_id).eq("candidate_id", candidate_id).execute()
-        if existing_record.data:
-            supabase.table("candidate_resume_analysis").update({"has_validated_resume": False}).eq("job_id", job_id).eq("candidate_id", candidate_id).execute()
-            supabase.table("hr_job_candidates").update({"has_validated_resume": False}).eq("job_id", job_id).eq("candidate_id", candidate_id).execute()
+        # Update has_validated_resume to False in both tables
+        supabase.table("candidate_resume_analysis").update(
+            {"has_validated_resume": False}
+        ).eq("job_id", job_id).eq("candidate_id", candidate_id).execute()
+        supabase.table("hr_job_candidates").update(
+            {"has_validated_resume": False}
+        ).eq("job_id", job_id).eq("candidate_id", candidate_id).execute()
         return {"status": "failed", "candidate_id": candidate_id, "error": str(e)}
 
     finally:

@@ -1189,6 +1189,15 @@ def extract_text_from_file(file_path: str, job_id: str) -> str:
     except Exception as e:
         raise Exception(f"Failed to extract text from file: {str(e)}")
 
+# Helper function to sanitize text for JSON safety
+def sanitize_text(text: str) -> str:
+    if not text:
+        return ""
+    # Replace problematic characters and escape for JSON
+    text = text.replace('\n', ' ').replace('\r', ' ')
+    # Use json.dumps to escape special characters, remove outer quotes
+    return json.dumps(text)[1:-1]
+
 # Helper function to clean Gemini AI output
 def clean_gemini_output(text: str) -> str:
     return text.strip()
@@ -1197,10 +1206,14 @@ def clean_gemini_output(text: str) -> str:
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def generate_report(resume_text: str, job_description: str) -> dict:
     try:
-        # Log the input to Gemini for debugging
+        # Sanitize inputs
+        sanitized_resume = sanitize_text(resume_text)
+        sanitized_job_desc = sanitize_text(job_description)
+        
+       # Log the input to Gemini for debugging
         log_progress("debug", "generate_report_input", "Sending to Gemini", {
-            "resume_text": resume_text[:1000],
-            "job_description": job_description[:1000]
+            "resume_text": sanitized_resume[:1000],
+            "job_description": sanitized_job_desc[:1000]
         })
 
         prompt = """
@@ -1260,7 +1273,7 @@ For companies:
 - Example: "Senior Developer at TCS, 2019 - 2022" becomes { "name": "TCS", "designation": "Senior Developer", "years": "2019 - 2022" }
 
 Use symbols: ✅ for 'yes', ⚠️ for 'partial', ❌ for 'no'. Return ONLY the JSON object.
-""".format(job_description=job_description, resume_text=resume_text)
+""".format(job_description=sanitized_job_desc, resume_text=sanitized_resume)
 
         response = gemini_model.generate_content(prompt)
         gemini_output = clean_gemini_output(response.text)
@@ -1274,7 +1287,7 @@ Use symbols: ✅ for 'yes', ⚠️ for 'partial', ❌ for 'no'. Return ONLY the 
         try:
             report = json.loads(gemini_output)
         except json.JSONDecodeError as e:
-            log_progress("debug", "generate_report_error", f"Failed to parse JSON: {str(e)}")
+            log_progress("debug", "generate_report_error", f"Failed to parse JSON: {str(e)}, raw_output: {gemini_output[:1000]}")
             raise Exception(f"Invalid JSON response from Gemini: {str(e)}")
 
         # Validate required fields
@@ -1282,7 +1295,7 @@ Use symbols: ✅ for 'yes', ⚠️ for 'partial', ❌ for 'no'. Return ONLY the 
             "overall_match_score", "matched_skills", "summary", "companies",
             "missing_or_weak_areas", "top_skills", "development_gaps",
             "additional_certifications", "section_wise_scoring",
-            "candidate_name", "email", "github", "linkedin"
+            "candidate_name", "email","phone_number", "github", "linkedin"
         ]
         for field in required_fields:
             if field not in report:

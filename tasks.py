@@ -1098,6 +1098,7 @@ import pytesseract
 from docx import Document
 import textract
 import ast
+import traceback
 
 # Import shared objects from config.py
 from config import gemini_model, supabase, SUPABASE_STORAGE_BUCKET, SUPABASE_REPORT_PATH_PREFIX, redis_conn
@@ -1190,15 +1191,9 @@ def extract_text_from_file(file_path: str, job_id: str) -> str:
     except Exception as e:
         raise Exception(f"Failed to extract text from file: {str(e)}")
 
-# Helper function to sanitize text for JSON safety
-def sanitize_text(text: str) -> str:
-    if not text:
-        return ""
-    # Replace problematic characters and escape for JSON
-    text = text.replace('\n', ' ').replace('\r', ' ')
-    # Use json.dumps to escape special characters, remove outer quotes
-    return json.dumps(text)[1:-1]
 
+
+# --- Keep the SIMPLIFIED clean_gemini_output ---
 def clean_gemini_output(text: str) -> str:
     text = text.strip()
     # Remove code fences (common issue)
@@ -1209,46 +1204,43 @@ def clean_gemini_output(text: str) -> str:
     text = text.strip()
 
     # Extract JSON object between the first { and the last }
-    # This helps if Gemini adds introductory/closing text despite the prompt
     start = text.find('{')
     end = text.rfind('}')
     if start != -1 and end != -1 and end > start:
         text = text[start:end+1]
     else:
-        # If no '{' or '}' found, return original text - maybe it's an error message?
-        # Or raise an error if you expect JSON always
          log_progress("debug", "clean_gemini_output_warning", "No JSON object markers ({}) found in text", {"text_preview": text[:200]})
-         # Depending on requirements, you might raise ValueError("No valid JSON object markers found") here
-         pass # Let json.loads handle it, might be valid JSON without {} if simple value
+         # Let json.loads handle potential errors if no markers found
 
     # Remove common control characters (safer)
     text = re.sub(r'[\x00-\x1F\x7F]', '', text)
-
     # Remove trailing commas before } or ] (relatively safe)
     text = re.sub(r',\s*([}\]])', r'\1', text)
-
-    # --- REMOVE OR COMMENT OUT THESE FRAGILE REGEXES ---
-    # # Escape unescaped curly braces in string values (TOO RISKY/FRAGILE)
-    # text = re.sub(r'([^\\])\{', r'\1\\{', text)
-    # text = re.sub(r'([^\\])\}', r'\1\\}', text)
-    # # Replace unquoted keys with quoted keys (TOO RISKY/FRAGILE)
-    # text = re.sub(r'([{,]\s*)(\w+)(:)', r'\1"\2"\3', text)
-    # --- END OF REMOVAL ---
-
     return text
 
 # Helper function to generate the report using Gemini API
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def generate_report(resume_text: str, job_description: str) -> dict:
     try:
-        # Sanitize inputs
-        sanitized_resume = sanitize_text(resume_text)
-        sanitized_job_desc = sanitize_text(job_description)
+    #     # Sanitize inputs
+    #     sanitized_resume = sanitize_text(resume_text)
+    #     sanitized_job_desc = sanitize_text(job_description)
         
-       # Log the input to Gemini for debugging
+    #    # Log the input to Gemini for debugging
+    #     log_progress("debug", "generate_report_input", "Sending to Gemini", {
+    #         "resume_text": sanitized_resume[:1000],
+    #         "job_description": sanitized_job_desc[:1000]
+    #     })
+          # --- CHANGE HERE ---
+        # Escape braces FOR .format() method, keep original content otherwise
+        # Basic cleaning like removing excessive whitespace might still be good
+        escaped_resume = resume_text.replace('{', '{{').replace('}', '}}')
+        escaped_job_desc = job_description.replace('{', '{{').replace('}', '}}')
+
+        # Log the input to Gemini for debugging (use escaped versions for safety in log data)
         log_progress("debug", "generate_report_input", "Sending to Gemini", {
-            "resume_text": sanitized_resume[:1000],
-            "job_description": sanitized_job_desc[:1000]
+            "resume_text_preview": escaped_resume[:1000], # Keep previews short
+            "job_description_preview": escaped_job_desc[:1000]
         })
 
         prompt = """
@@ -1308,7 +1300,7 @@ For companies:
 - Example: "Senior Developer at TCS, 2019 - 2022" becomes { "name": "TCS", "designation": "Senior Developer", "years": "2019 - 2022" }
 
 Use symbols: ✅ for 'yes', ⚠️ for 'partial', ❌ for 'no'. IMPORTANT: Ensure the output is ONLY a single, valid JSON object. All string values within the JSON must be properly escaped according to JSON standards (e.g., use \\" for quotes inside strings, \\\\ for backslashes, etc.). Do NOT include any explanatory text before or after the JSON object.
-""".format(job_description=sanitized_job_desc, resume_text=sanitized_resume)
+""".format(job_description=escaped_job_desc, resume_text=escaped_resume)
 
         response = gemini_model.generate_content(prompt)
         raw_gemini_text = response.text # Get the raw text
@@ -1318,27 +1310,44 @@ Use symbols: ✅ for 'yes', ⚠️ for 'partial', ❌ for 'no'. IMPORTANT: Ensur
             "raw_output_preview": raw_gemini_text[:2000] # Log a significant chunk
         })
         
-        gemini_output = clean_gemini_output(response.text)
+        gemini_output = clean_gemini_output(raw_gemini_text)
 
-        # Log Gemini's raw output for debugging
-        log_progress("debug", "generate_report_output", "Gemini response", {
-            "raw_output": gemini_output[:1000], 
-            "cleaned_output": gemini_output[:1000]
+        # # Log Gemini's raw output for debugging
+        # log_progress("debug", "generate_report_output", "Gemini response", {
+        #     "raw_output": gemini_output[:1000], 
+        #     "cleaned_output": gemini_output[:1000]
+        # })
+        log_progress("debug", "generate_report_cleaned_output", "Cleaned Gemini response", {
+            "cleaned_output_preview": gemini_output[:2000]
         })
 
         # Parse JSON response
         try:
             report = json.loads(gemini_output)
         except json.JSONDecodeError as e:
-            log_progress("debug", "generate_report_error", f"Failed to parse JSON: {str(e)}, raw_output: {gemini_output[:1000]},cleaned_output: {gemini_output[:1000]}")
+            # 
+            log_progress("debug", "generate_report_error", f"Failed to parse JSON: {str(e)}", {
+                "parsing_error": str(e),
+                "cleaned_output_preview": gemini_output[:2000]
+            })
+            log_progress("debug", "generate_report_fallback", "Attempting fallback parsing with ast.literal_eval")
             try:
                 # Fallback: Use ast.literal_eval for malformed JSON
                 report = ast.literal_eval(gemini_output)
                 if not isinstance(report, dict):
                     raise ValueError("Fallback parsing did not yield a dictionary")
             except (ValueError, SyntaxError) as fallback_e:
-                log_progress("debug", "generate_report_error", f"Fallback parsing failed: {str(fallback_e)}, raw_output: {response.text[:1000]}, cleaned_output: {gemini_output[:1000]}")
-                raise Exception(f"Invalid JSON response from Gemini: {str(e)}")
+                # log_progress("debug", "generate_report_error", f"Fallback parsing failed: {str(fallback_e)}, raw_output: {response.text[:1000]}, cleaned_output: {gemini_output[:2000]}")
+                log_progress("debug", "generate_report_error", f"Fallback parsing failed: {str(fallback_e)}", {
+                    "fallback_error": str(fallback_e),
+                    "cleaned_output_preview": gemini_output[:2000]
+                })
+                raise Exception(f"Invalid JSON response from Gemini after cleaning and fallback: Original error: {str(e)}") from e
+
+        # Log the parsed report for debugging
+        log_progress("debug", "generate_report_parsed", "Parsed report", {
+            "report_keys": list(report.keys()) # Log keys to check structure
+        })
 
         # Validate required fields
         required_fields = [

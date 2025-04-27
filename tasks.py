@@ -1220,30 +1220,41 @@ def clean_gemini_output(text: str) -> str:
 
 # Helper function to generate the report using Gemini API
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def generate_report(resume_text: str, job_description: str) -> dict:
+def generate_report(resume_text: str, job_description: str, job_id: str) -> dict: # Added job_id parameter
+    # Use a unique identifier for this specific attempt for easier log tracing
+    attempt_id = os.urandom(4).hex()
+    current_step = "init"
     try:
-    #     # Sanitize inputs
-    #     sanitized_resume = sanitize_text(resume_text)
-    #     sanitized_job_desc = sanitize_text(job_description)
-        
-    #    # Log the input to Gemini for debugging
-    #     log_progress("debug", "generate_report_input", "Sending to Gemini", {
-    #         "resume_text": sanitized_resume[:1000],
-    #         "job_description": sanitized_job_desc[:1000]
-    #     })
-          # --- CHANGE HERE ---
-        # Escape braces FOR .format() method, keep original content otherwise
-        # Basic cleaning like removing excessive whitespace might still be good
+        current_step = "log_start"
+        # DETAILED LOG: Function entry
+        log_progress(job_id, f"generate_report_start_{attempt_id}", "Entering generate_report function")
+
+        current_step = "log_raw_inputs"
+        # DETAILED LOG: Log raw inputs before escaping
+        log_progress(job_id, f"generate_report_raw_inputs_{attempt_id}", "Raw input previews", {
+            "resume_preview": resume_text[:200],
+            "jd_preview": job_description[:200]
+        })
+
+        # --- Your existing brace escaping ---
+        current_step = "escape_inputs"
         escaped_resume = resume_text.replace('{', '{{').replace('}', '}}')
         escaped_job_desc = job_description.replace('{', '{{').replace('}', '}}')
+        # DETAILED LOG: Log escaped inputs
+        log_progress(job_id, f"generate_report_escaped_{attempt_id}", "Inputs escaped for formatting", {
+            "resume_preview": escaped_resume[:200],
+            "jd_preview": escaped_job_desc[:200]
+        })
 
-        # Log the input to Gemini for debugging (use escaped versions for safety in log data)
-        log_progress("debug", "generate_report_input", "Sending to Gemini", {
-            "resume_text_preview": escaped_resume[:1000], # Keep previews short
+        # --- Your existing input log (now with attempt_id) ---
+        current_step = "log_input_preview"
+        log_progress(job_id, f"generate_report_input_{attempt_id}", "Preparing prompt", { # Added attempt_id
+            "resume_text_preview": escaped_resume[:1000],
             "job_description_preview": escaped_job_desc[:1000]
         })
 
-        prompt = """
+        # --- Your existing prompt definition ---
+        prompt_template = """
 Analyze this resume against the job description and return ONLY a valid JSON response with:
 - overall_match_score (percentage, 0-100)
 - matched_skills (array of objects with:
@@ -1260,11 +1271,11 @@ Analyze this resume against the job description and return ONLY a valid JSON res
 - development_gaps (array of skills needing improvement)
 - additional_certifications (array of strings listing certifications not required by JD)
 - section_wise_scoring (array of objects with main sections, each containing:
-    {
+    {{
       section (string),
       weightage (percentage),
-      submenus (array of { submenu (string), weightage (percentage of section), score (out of 10), weighted_score (calculated), remarks (string) })
-    })
+      submenus (array of {{ submenu (string), weightage (percentage of section), score (out of 10), weighted_score (calculated), remarks (string) }})
+    }})
 - candidate_name (string, extracted from resume or "Unknown" if not found)
 - email (string, extracted from resume or "" if not found)
 - phone_number (string, extracted from resume or "" if not found)
@@ -1297,59 +1308,81 @@ For companies:
 - Extract company names, designations, and years from work experience sections.
 - If designation is not explicitly mentioned, use "-".
 - If years are not specified, use "-".
-- Example: "Senior Developer at TCS, 2019 - 2022" becomes { "name": "TCS", "designation": "Senior Developer", "years": "2019 - 2022" }
+- Example: "Senior Developer at TCS, 2019 - 2022" becomes {{ "name": "TCS", "designation": "Senior Developer", "years": "2019 - 2022" }}
 
 Use symbols: ✅ for 'yes', ⚠️ for 'partial', ❌ for 'no'. IMPORTANT: Ensure the output is ONLY a single, valid JSON object. All string values within the JSON must be properly escaped according to JSON standards (e.g., use \\" for quotes inside strings, \\\\ for backslashes, etc.). Do NOT include any explanatory text before or after the JSON object.
-""".format(job_description=escaped_job_desc, resume_text=escaped_resume)
+"""
+        current_step = "before_format"
+        # DETAILED LOG: Before formatting prompt
+        log_progress(job_id, f"generate_report_before_format_{attempt_id}", "About to format the prompt string")
 
+        # --- Your existing prompt formatting ---
+        prompt = prompt_template.format(job_description=escaped_job_desc, resume_text=escaped_resume)
+
+        current_step = "after_format"
+        # DETAILED LOG: After formatting prompt
+        log_progress(job_id, f"generate_report_after_format_{attempt_id}", "Prompt string formatted", {"prompt_preview": prompt[:500]})
+
+        # --- Your existing Gemini call ---
+        current_step = "before_api_call"
+        # DETAILED LOG: Before calling Gemini API
+        log_progress(job_id, f"generate_report_before_api_call_{attempt_id}", "About to call gemini_model.generate_content()")
         response = gemini_model.generate_content(prompt)
+        current_step = "after_api_call"
+        # DETAILED LOG: After calling Gemini API
+        log_progress(job_id, f"generate_report_after_api_call_{attempt_id}", "Returned from gemini_model.generate_content()")
+
         raw_gemini_text = response.text # Get the raw text
 
-        # *** ADD THIS LOGGING ***
-        log_progress("debug", "generate_report_raw_output", "Raw Gemini response received", {
-            "raw_output_preview": raw_gemini_text[:2000] # Log a significant chunk
+        # --- Your existing raw output log (now with attempt_id) ---
+        current_step = "log_raw_output"
+        log_progress(job_id, f"generate_report_raw_output_{attempt_id}", "Raw Gemini response received", { # Added attempt_id
+            "raw_output_preview": raw_gemini_text[:2000]
         })
-        
-        gemini_output = clean_gemini_output(raw_gemini_text)
 
-        # # Log Gemini's raw output for debugging
-        # log_progress("debug", "generate_report_output", "Gemini response", {
-        #     "raw_output": gemini_output[:1000], 
-        #     "cleaned_output": gemini_output[:1000]
-        # })
-        log_progress("debug", "generate_report_cleaned_output", "Cleaned Gemini response", {
+        # --- Your existing cleaning call ---
+        current_step = "clean_output"
+        gemini_output = clean_gemini_output(raw_gemini_text)
+        # DETAILED LOG: After cleaning output
+        log_progress(job_id, f"generate_report_cleaned_output_{attempt_id}", "Cleaned Gemini response", { # Added attempt_id
             "cleaned_output_preview": gemini_output[:2000]
         })
 
-        # Parse JSON response
+        # --- Your existing JSON parsing block ---
+        current_step = "parse_json"
         try:
             report = json.loads(gemini_output)
         except json.JSONDecodeError as e:
-            # 
-            log_progress("debug", "generate_report_error", f"Failed to parse JSON: {str(e)}", {
+            # DETAILED LOG: JSON parsing failed
+            log_progress(job_id, f"generate_report_parse_error_{attempt_id}", f"Failed to parse JSON: {str(e)}", { # Added attempt_id
                 "parsing_error": str(e),
                 "cleaned_output_preview": gemini_output[:2000]
             })
-            log_progress("debug", "generate_report_fallback", "Attempting fallback parsing with ast.literal_eval")
+            current_step = "parse_fallback"
+            # DETAILED LOG: Attempting fallback parsing
+            log_progress(job_id, f"generate_report_fallback_{attempt_id}", "Attempting fallback parsing with ast.literal_eval") # Added attempt_id
             try:
-                # Fallback: Use ast.literal_eval for malformed JSON
                 report = ast.literal_eval(gemini_output)
                 if not isinstance(report, dict):
                     raise ValueError("Fallback parsing did not yield a dictionary")
+                # DETAILED LOG: Fallback parsing succeeded
+                log_progress(job_id, f"generate_report_fallback_success_{attempt_id}", "Fallback parsing successful") # Added attempt_id
             except (ValueError, SyntaxError) as fallback_e:
-                # log_progress("debug", "generate_report_error", f"Fallback parsing failed: {str(fallback_e)}, raw_output: {response.text[:1000]}, cleaned_output: {gemini_output[:2000]}")
-                log_progress("debug", "generate_report_error", f"Fallback parsing failed: {str(fallback_e)}", {
+                # DETAILED LOG: Fallback parsing failed
+                log_progress(job_id, f"generate_report_fallback_error_{attempt_id}", f"Fallback parsing failed: {str(fallback_e)}", { # Added attempt_id
                     "fallback_error": str(fallback_e),
                     "cleaned_output_preview": gemini_output[:2000]
                 })
-                raise Exception(f"Invalid JSON response from Gemini after cleaning and fallback: Original error: {str(e)}") from e
+                raise Exception(f"Invalid JSON response from Gemini after cleaning and fallback: Original error: {str(e)}. Fallback error: {str(fallback_e)}") from e # Keep combined error
 
-        # Log the parsed report for debugging
-        log_progress("debug", "generate_report_parsed", "Parsed report", {
-            "report_keys": list(report.keys()) # Log keys to check structure
+        # --- Your existing parsed report log (now with attempt_id) ---
+        current_step = "log_parsed_report"
+        log_progress(job_id, f"generate_report_parsed_{attempt_id}", "Parsed report structure", { # Added attempt_id
+            "report_keys": list(report.keys())
         })
 
-        # Validate required fields
+        # --- Your existing validation ---
+        current_step = "validate_report"
         required_fields = [
             "overall_match_score", "matched_skills", "summary", "companies",
             "missing_or_weak_areas", "top_skills", "development_gaps",
@@ -1358,46 +1391,99 @@ Use symbols: ✅ for 'yes', ⚠️ for 'partial', ❌ for 'no'. IMPORTANT: Ensur
         ]
         for field in required_fields:
             if field not in report:
-                log_progress("debug", "generate_report_error", f"Missing field in report: {field}")
+                # DETAILED LOG: Validation failed
+                log_progress(job_id, f"generate_report_validation_error_{attempt_id}", f"Missing field in report: {field}", { # Added attempt_id
+                    "report_keys": list(report.keys())
+                })
                 raise Exception(f"Missing required field in Gemini response: {field}")
 
-        # Normalize company names
-        def normalize_company_name(name):
+        # --- Your existing company normalization ---
+        current_step = "normalize_companies"
+        # Define normalization func locally or ensure it's imported/available
+        # Using a local definition here to be self-contained:
+        def normalize_company_name_local(name):
+            if not isinstance(name, str): # Handle potential non-string names
+                return "-"
             lower_name = name.lower().strip()
+            # Add your specific rules here if needed
             if lower_name in ["infosys", "infosys ltd"]:
                 return "Infosys"
             if lower_name == "infosys infotech":
                 return "Infosys Infotech"
-            return name.strip()
+            # General cleanup (optional, adjust as needed)
+            normalized = re.sub(r'\s*(ltd|limited|inc|corp|corporation|llc|co)\.?\s*$', '', lower_name, flags=re.IGNORECASE)
+            normalized = re.sub(r'[^\w\s-]', '', normalized) # Keep hyphens maybe?
+            normalized = ' '.join(normalized.split()) # Consolidate whitespace
+            return normalized.strip() if normalized else name.strip() # Return original if normalization results in empty
 
-        report["companies"] = [
-            {
-                "name": normalize_company_name(company["name"]),
-                "designation": company.get("designation", "-"),
-                "years": company.get("years", "-")
-            }
-            for company in report["companies"]
-        ]
+        # Ensure report["companies"] exists and is a list before processing
+        if "companies" in report and isinstance(report["companies"], list):
+            processed_companies = []
+            for company in report["companies"]:
+                 # Ensure company is a dict and has 'name' before processing
+                if isinstance(company, dict) and "name" in company:
+                    processed_companies.append({
+                        "name": company["name"], # Keep original name in report for display?
+                        "normalized_name_for_dedup": normalize_company_name_local(company["name"]), # Use a temp key for dedup logic
+                        "designation": company.get("designation", "-"),
+                        "years": company.get("years", "-")
+                    })
+                # else: log warning maybe? Skipping invalid company entry
 
-        # Deduplicate companies by name, keeping the latest entry
-        unique_companies = []
-        seen_names = set()
-        for company in reversed(report["companies"]):
-            if company["name"] not in seen_names:
-                unique_companies.append(company)
-                seen_names.add(company["name"])
-        report["companies"] = list(reversed(unique_companies))
+            # Deduplicate based on the temporary normalized name, keeping the latest entry
+            unique_companies_final = []
+            seen_normalized_names = set()
+            for company in reversed(processed_companies):
+                norm_name = company["normalized_name_for_dedup"]
+                if norm_name not in seen_normalized_names:
+                    # Remove the temporary key before adding to final list
+                    del company["normalized_name_for_dedup"]
+                    unique_companies_final.append(company)
+                    seen_normalized_names.add(norm_name)
+            report["companies"] = list(reversed(unique_companies_final))
+        else:
+             # Handle case where 'companies' is missing or not a list
+             report["companies"] = []
+             log_progress(job_id, f"generate_report_normalization_warning_{attempt_id}", "Key 'companies' missing or not a list in Gemini report", {
+                 "report_keys": list(report.keys())
+             })
 
-        # Log the parsed report for debugging
-        log_progress("debug", "generate_report_parsed", "Parsed report", {
-            "report": report
+
+        # --- Your existing final parsed report log (now with attempt_id) ---
+        # This might log large amounts of data, consider limiting it
+        current_step = "log_final_report"
+        try:
+            report_preview = json.dumps(report)[:2000] # Log preview
+        except Exception:
+            report_preview = "Error creating report preview"
+        log_progress(job_id, f"generate_report_final_parsed_{attempt_id}", "Final processed report preview", { # Added attempt_id
+            "report_preview": report_preview
         })
 
+        current_step = "final_success"
+        # DETAILED LOG: Final success
+        log_progress(job_id, f"generate_report_success_{attempt_id}", "Report generated and parsed successfully")
         return report
 
+    # --- Updated Exception Block ---
     except Exception as e:
-        log_progress("debug", "generate_report_error", f"Failed to generate report: {str(e)}")
-        raise Exception(f"Failed to generate report with Gemini: {str(e)}")
+        # Log the exception with traceback and the last known step
+        tb_str = traceback.format_exc()
+        # Use logger directly for critical error logging to avoid log_progress issues
+        logger.error(f"Job {job_id} - generate_report_error_{attempt_id}: Exception caught in generate_report at step '{current_step}'")
+        logger.error(f"Job {job_id} - Error Type: {type(e).__name__}")
+        logger.error(f"Job {job_id} - Error Message: {str(e)}")
+        logger.error(f"Job {job_id} - Traceback:\n{tb_str}")
+
+        # Also try to log via log_progress for Redis record
+        log_progress(job_id, f"generate_report_error_{attempt_id}", f"Exception caught at step '{current_step}': {str(e)}", {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "last_step": current_step,
+            "traceback": tb_str
+        })
+        # Re-raise the exception for the retry mechanism
+        raise Exception(f"Failed to generate report at step '{current_step}': {str(e)}") from e
 
 # Helper function to save report as PDF
 def save_report_as_pdf(report: dict, output_path: str):
@@ -1579,7 +1665,7 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
 
         # Generate report
         log_progress(job_id, "generate_report", "Generating report with Gemini")
-        report = generate_report(resume_text, job_description)
+        report = generate_report(resume_text, job_description, job_id)
         log_progress(job_id, "generate_report", "Report generated successfully", {
             "overall_score": report["overall_match_score"],
             "candidate_name": report["candidate_name"]

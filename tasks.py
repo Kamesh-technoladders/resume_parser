@@ -1606,16 +1606,37 @@ def save_report_as_pdf(report: dict, output_path: str):
 
 # Helper function to upload report to Supabase Storage
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def upload_report(report_path: str, destination_path: str):
+def upload_report(report_path: str, destination_path: str, job_id: str):
     try:
+        # --- NEW LOGGING ---
+        file_exists = os.path.exists(report_path)
+        file_size = os.path.getsize(report_path) if file_exists else -1
+        log_progress(job_id, "upload_report_info", "Preparing to upload report", {
+            "local_report_path": report_path,
+            "destination_path": destination_path,
+            "local_file_exists": file_exists,
+            "local_file_size_bytes": file_size
+        })
+        if not file_exists or file_size <= 0:
+             log_progress(job_id, "upload_report_error", "Local report file missing or empty", {"path": report_path, "size": file_size})
+             raise Exception(f"Local report file missing or empty: {report_path}")
+        # --- END NEW LOGGING ---
         with open(report_path, "rb") as f:
             response = supabase.storage.from_(SUPABASE_STORAGE_BUCKET).upload(destination_path, f)
+            log_progress(job_id, "upload_report_success", "Upload API call successful", {"destination": destination_path})
             if hasattr(response, 'status_code') and response.status_code != 200:
                 raise Exception(f"Upload failed with status {response.status_code}: {response.json()}")
-        return response
+        return response     
     except Exception as e:
-        log_progress("upload_error", f"Failed to upload report to Supabase: {str(e)}")
-        raise Exception(f"Failed to upload report to Supabase: {str(e)}")
+        tb_str = traceback.format_exc()
+        log_progress(job_id, "upload_report_exception", f"Failed to upload report to Supabase: {str(e)}", {
+             "local_report_path": report_path,
+             "destination_path": destination_path,
+             "error_type": type(e).__name__,
+             "error_message": str(e),
+             "traceback": tb_str
+        })
+        raise Exception(f"Failed to upload report to Supabase ({type(e).__name__}): {str(e)}") from e
 
 # Helper function to normalize company names
 def normalize_company_name(name: str) -> str:
@@ -1696,7 +1717,7 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
         # Upload report to Supabase Storage
         log_progress(job_id, "upload_report", "Uploading report to Supabase Storage")
         report_destination_path = f"{SUPABASE_REPORT_PATH_PREFIX}/{job_id}/{report_filename}"
-        upload_report(local_report_path, report_destination_path)
+        upload_report(local_report_path, report_destination_path,job_id)
         log_progress(job_id, "upload_report", "Report uploaded successfully", {
             "report_destination_path": report_destination_path
         })

@@ -14,9 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Make start.sh executable
-COPY start.sh .
-COPY .env .
-RUN chmod +x start.sh
+
+RUN chmod +x container.sh
 
 EXPOSE 5005
-CMD ["./start.sh"]
+# Set the command to run the script that starts Flask and RQ INSIDE the container
+CMD ["./container.sh"]

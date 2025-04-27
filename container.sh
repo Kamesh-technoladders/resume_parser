@@ -1,38 +1,42 @@
 #!/bin/bash
 
-# Define network name
-NETWORK_NAME="resume-parser-network"
+# Exit immediately if a command exits with a non-zero status.
+set -e
 
-# Define container names
-REDIS_CONTAINER="redis"
-APP_CONTAINER="resume-parser-container"
+# Wait for Redis to be available
+echo ">>> Waiting for Redis service at host 'redis' on port 6379..."
+while ! redis-cli -h redis -p 6379 ping > /dev/null 2>&1; do
+    echo "Redis not available yet, sleeping for 1 second..."
+    sleep 1
+done
+echo ">>> Redis is available!"
 
-# Define image names
-APP_IMAGE="resume_parser_app"
+# Start the Flask app in the background
+echo ">>> Starting Flask application..."
+python app.py &
+FLASK_PID=$! # Get Flask process ID
 
-# Create Docker network (if not already created)
-echo "Creating Docker network: $NETWORK_NAME (if not exists)..."
-docker network create $NETWORK_NAME || true
+# Start the RQ worker in the background, logging to stdout/stderr
+# (Docker logs will capture this automatically)
+echo ">>> Starting RQ worker..."
+rq worker --with-scheduler --url redis://redis:6379 &
+RQ_PID=$! # Get RQ worker process ID
 
-# Build the application image (add this line to ensure the image is created)
-echo "Building the Docker image: $APP_IMAGE..."
-docker build --no-cache -t $APP_IMAGE .
+echo ">>> Flask and RQ Worker started."
+echo ">>> Tailing RQ Worker logs (use 'docker logs <container_id>' for combined logs)..."
 
-# Run Redis container
-echo "Starting Redis container..."
-docker run -d \
-  --name $REDIS_CONTAINER \
-  --network $NETWORK_NAME \
-  redis \
-  redis-server --bind 0.0.0.0 --protected-mode no
+# Wait for either process to exit
+# This is a simple way to keep the script running while background jobs run.
+# If Flask or RQ worker exits, the script will exit, stopping the container.
+wait -n $FLASK_PID $RQ_PID
 
-# Run Resume Parser application container
-echo "Starting Resume Parser container..."
-docker run -d \
-  -p 5005:5005 \
-  --name $APP_CONTAINER \
-  --network $NETWORK_NAME \
-  --env-file .env \
-  $APP_IMAGE
+# Capture exit code
+EXIT_CODE=$?
+echo ">>> A background process exited with code $EXIT_CODE. Stopping container..."
+exit $EXIT_CODE
 
-echo "All containers are up and running!"
+# --- Alternative to keep container running (less informative on failure) ---
+# Keep the container alive indefinitely - allows checking logs even if workers stop
+# echo ">>> Processes started. Keeping container alive."
+# tail -f /dev/null
+# ---

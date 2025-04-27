@@ -16,7 +16,7 @@ docker network create $NETWORK_NAME || true
 
 # Build the application image (add this line to ensure the image is created)
 echo "Building the Docker image: $APP_IMAGE..."
-docker build -t $APP_IMAGE .
+docker build --no-cache -t $APP_IMAGE .
 
 # Run Redis container
 echo "Starting Redis container..."

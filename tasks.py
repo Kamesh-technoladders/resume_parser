@@ -1786,32 +1786,32 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
              log_progress(job_id, "save_candidate_resume_analysis_error", f"Failed to upsert candidate_resume_analysis: {str(analysis_upsert_exc)}")
              raise # Re-raise
 
-        # Step 3: Update hr_job_candidates.has_validated_resume
-        # --- MODIFIED BLOCK ---
-        log_progress(job_id, "update_hr_job_candidates", "Updating has_validated_resume in hr_job_candidates")
-        try:
-            candidate_response = supabase.table("hr_job_candidates").update(
-                {"has_validated_resume": True} # Set to True
-            ).eq("job_id", job_id).eq("candidate_id", candidate_id).execute(returning='minimal')
+        # # Step 3: Update hr_job_candidates.has_validated_resume
+        # # --- MODIFIED BLOCK ---
+        # log_progress(job_id, "update_hr_job_candidates", "Updating has_validated_resume in hr_job_candidates")
+        # try:
+        #     candidate_response = supabase.table("hr_job_candidates").update(
+        #         {"has_validated_resume": True} # Set to True
+        #     ).eq("job_id", job_id).eq("candidate_id", candidate_id).execute()
 
-            # Log the response, but don't fail based on .data
-            log_progress(job_id, "update_hr_job_candidates_response", "Supabase response for hr_job_candidates update", {
-                "response_data": str(candidate_response.data) if hasattr(candidate_response, 'data') else "N/A",
-                "response_count": str(candidate_response.count) if hasattr(candidate_response, 'count') else "N/A"
-            })
-            # Assume success if .execute() did not raise an HTTP error exception
+        #     # Log the response, but don't fail based on .data
+        #     log_progress(job_id, "update_hr_job_candidates_response", "Supabase response for hr_job_candidates update", {
+        #         "response_data": str(candidate_response.data) if hasattr(candidate_response, 'data') else "N/A",
+        #         "response_count": str(candidate_response.count) if hasattr(candidate_response, 'count') else "N/A"
+        #     })
+        #     # Assume success if .execute() did not raise an HTTP error exception
 
-        except Exception as update_exc:
-            # Log the specific exception during update
-            tb_str = traceback.format_exc()
-            log_progress(job_id, "update_hr_job_candidates_error", f"Exception during hr_job_candidates update: {str(update_exc)}", {
-                "error_type": type(update_exc).__name__,
-                "error_message": str(update_exc),
-                "traceback": tb_str
-            })
-            # Re-raise to fail the task
-            raise Exception(f"Failed to update hr_job_candidates.has_validated_resume: {str(update_exc)}") from update_exc
-        # --- END MODIFIED BLOCK ---
+        # except Exception as update_exc:
+        #     # Log the specific exception during update
+        #     tb_str = traceback.format_exc()
+        #     log_progress(job_id, "update_hr_job_candidates_error", f"Exception during hr_job_candidates update: {str(update_exc)}", {
+        #         "error_type": type(update_exc).__name__,
+        #         "error_message": str(update_exc),
+        #         "traceback": tb_str
+        #     })
+        #     # Re-raise to fail the task
+        #     raise Exception(f"Failed to update hr_job_candidates.has_validated_resume: {str(update_exc)}") from update_exc
+        # # --- END MODIFIED BLOCK ---
 
         # Step 4: Save and check company associations in candidate_companies
         # --- MODIFIED BLOCK ---
@@ -1919,9 +1919,9 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
                 {"has_validated_resume": False, "summary": f"Processing failed: {str(e)[:500]}"}
             ).eq("job_id", job_id).eq("candidate_id", candidate_id).execute()
 
-            supabase.table("hr_job_candidates").update(
-                {"has_validated_resume": False}
-            ).eq("job_id", job_id).eq("candidate_id", candidate_id).execute()
+            # supabase.table("hr_job_candidates").update(
+            #     {"has_validated_resume": False}
+            # ).eq("job_id", job_id).eq("candidate_id", candidate_id).execute()
             log_progress(job_id, "failure_update_status_success", "Successfully set has_validated_resume=False")
         except Exception as db_update_e:
              logger.error(f"Job {job_id} - DB_UPDATE_ERROR_ON_FAIL: Failed to update status to failed in DB: {db_update_e}")

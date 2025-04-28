@@ -1840,7 +1840,7 @@ def upload_report(report_path: str, destination_path: str, job_id: str):
                 file=f,
                 # --- Ensure file_options are included ---
                 file_options={
-                    "upsert": True, # Allow overwriting
+                    "upsert": "true", # Allow overwriting
                     "content-type": "application/pdf" # Set correct MIME type
                 }
                 # ---

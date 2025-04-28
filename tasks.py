@@ -1,858 +1,1557 @@
 
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, PageBreak, KeepTogether
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
-from reportlab.lib.units import inch
-from reportlab.lib import colors
-import io
+# from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, PageBreak, KeepTogether
+# from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+# from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+# from reportlab.lib.units import inch
+# from reportlab.lib import colors
+# import io
+# import os
+# import json
+# import re
+# import logging
+# import datetime
+# from pdf2image import convert_from_path
+# from pdf2image.exceptions import PDFPageCountError
+# from reportlab.lib.pagesizes import letter
+# from reportlab.pdfgen import canvas
+# from tenacity import retry, stop_after_attempt, wait_exponential
+# import pytesseract
+# from docx import Document
+# import textract
+# import ast
+# import traceback
+
+
+# # Import shared objects from config.py
+# from config import gemini_model, supabase, SUPABASE_STORAGE_BUCKET, SUPABASE_REPORT_PATH_PREFIX, redis_conn
+
+
+# # --- Add Custom Exception ---
+# class FileNotFoundInStorageError(Exception):
+#     """Custom exception for when a file is not found in Supabase Storage."""
+#     pass
+# # --- End Custom Exception ---
+
+# # Set up logging
+# logging.basicConfig(level=logging.INFO)
+# logger = logging.getLogger(__name__)
+
+# # --- Define Styles (Can be done outside the function for reuse) ---
+# styles = getSampleStyleSheet()
+
+# # Custom Styles - Refined for Appeal
+# styles.add(ParagraphStyle(name='ReportTitle',
+#                           parent=styles['h1'],
+#                           alignment=TA_CENTER,
+#                           fontSize=20,
+#                           spaceBottom=24,
+#                           textColor=colors.HexColor('#3A0CA3'))) # Deep Purple Title
+
+# styles.add(ParagraphStyle(name='SectionHeading',
+#                           parent=styles['h2'],
+#                           fontSize=14,
+#                           spaceBefore=16,
+#                           spaceAfter=8,
+#                           textColor=colors.HexColor('#480CA8'), # Royal Blue Heading
+#                           alignment=TA_LEFT))
+
+# styles.add(ParagraphStyle(name='SubHeading',
+#                           parent=styles['h3'],
+#                           fontSize=11,
+#                           spaceBefore=10,
+#                           spaceAfter=5,
+#                           textColor=colors.HexColor('#480CA8'), # Another Purple Shade
+#                           fontName='Helvetica-Bold',
+#                           alignment=TA_LEFT))
+
+# styles.add(ParagraphStyle(name='Body',
+#                           parent=styles['Normal'],
+#                           alignment=TA_LEFT,
+#                           fontSize=10,
+#                           leading=14, # Line spacing
+#                           textColor=colors.darkslategray))
+
+# styles.add(ParagraphStyle(name='ListItem',
+#                           parent=styles['Body'],
+#                           leftIndent=20,
+#                           spaceBefore=2,
+#                           spaceAfter=2)) # For bullet points
+
+# styles.add(ParagraphStyle(name='ScoreHighlight',
+#                           parent=styles['Normal'],
+#                           alignment=TA_RIGHT,
+#                           fontSize=22, # Larger score
+#                           fontName='Helvetica-Bold',
+#                           textColor=colors.HexColor('#3A0CA3'))) # Match title color
+
+# styles.add(ParagraphStyle(name='ScoreLabel',
+#                           parent=styles['Normal'],
+#                           alignment=TA_LEFT,
+#                           fontSize=12,
+#                           fontName='Helvetica-Bold',
+#                           textColor=colors.HexColor('#4361EE'))) # Match heading color
+
+# styles.add(ParagraphStyle(name='TableHeader',
+#                            parent=styles['Normal'],
+#                            fontName='Helvetica-Bold',
+#                            fontSize=9,
+#                            alignment=TA_LEFT,
+#                            textColor=colors.white))
+
+# styles.add(ParagraphStyle(name='TableCell',
+#                            parent=styles['Normal'],
+#                            fontSize=9,
+#                            leading=11))
+
+# styles.add(ParagraphStyle(name='WatermarkStyle', # Can be reused if needed elsewhere
+#                           parent=styles['Normal'],
+#                           alignment=TA_RIGHT,
+#                           fontSize=8,
+#                           textColor=colors.Color(0,0,0, alpha=0.15))) # Faint watermark
+
+# # --- Watermark Function ---
+# def add_watermark(canvas, doc):
+#     """Adds 'hrumbles.ai' watermark to each page."""
+#     canvas.saveState()
+#     canvas.setFont('Helvetica', 8)
+#     canvas.setFillColor(colors.Color(0,0,0, alpha=0.15)) # Faint color
+#     # Position in top-right corner
+#     canvas.drawRightString(doc.pagesize[0] - 0.5*inch, doc.pagesize[1] - 0.5*inch, "hrumbles.ai")
+#     canvas.restoreState()
+
+
+# # Function to log progress and store in Redis
+# def log_progress(job_id: str, step: str, message: str, data: dict = None):
+#     """Log a progress step and store in Redis."""
+#     log_entry = {
+#         "step": step,
+#         "message": message,
+#         "data": data or {},
+#         "timestamp": str(os.times()[4])  # System time
+#     }
+#     logger.info(f"Job {job_id} - {step}: {message}")
+#     redis_conn.rpush(f"job_logs:{job_id}", json.dumps(log_entry))
+
+# # Helper function to download resume from Supabase Storage
+# @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+# def download_resume(resume_path: str) -> str:
+#     try:
+#         response = supabase.storage.from_(SUPABASE_STORAGE_BUCKET).download(resume_path)
+#         local_path = f"/tmp/{os.path.basename(resume_path)}"
+#         with open(local_path, "wb") as f:
+#             f.write(response)
+#         return local_path
+#     except Exception as e:
+#         # Check if the error is likely a 'Not Found' error from Supabase Storage client
+#         # Note: The exact error type/message might depend on the supabase-py version.
+#         # Check for common indicators like 'NotFound', status code 400/404 in the message.
+#         error_message = str(e).lower()
+#         if 'not found' in error_message or 'status_code=400' in error_message or 'statuscode=400' in error_message or 'empty path' in error_message or 'status_code=404' in error_message:
+#              logger.error(f"Resume file not found in Supabase Storage at path: {resume_path}. Error: {e}")
+#              # Raise specific custom exception
+#              raise FileNotFoundInStorageError(f"Resume file not found in Supabase Storage: {resume_path}") from e
+#         else:
+#              # For other errors (network, permissions, etc.), raise a general exception
+#              logger.error(f"Failed to download resume from Supabase. Path: {resume_path}. Error: {e}")
+#              raise Exception(f"Failed to download resume from Supabase: {str(e)}") from e
+
+# # --- END MODIFIED download_resume Function ---
+# # Helper function to get the total number of pages in a PDF
+# def get_pdf_page_count(pdf_path: str) -> int:
+#     try:
+#         from pdf2image import pdfinfo_from_path
+#         pdf_info = pdfinfo_from_path(pdf_path)
+#         return int(pdf_info["Pages"])
+#     except PDFPageCountError as e:
+#         raise Exception(f"Failed to determine PDF page count: {str(e)}")
+
+# # Helper function to extract text from a file (PDF, DOCX, or DOC)
+# def extract_text_from_file(file_path: str, job_id: str) -> str:
+#     try:
+#         file_extension = os.path.splitext(file_path)[1].lower()
+#         text = ""
+
+#         if file_extension == ".pdf":
+#             total_pages = get_pdf_page_count(file_path)
+#             log_progress(job_id, "extract_text", f"PDF has {total_pages} pages")
+#             custom_config = r'--oem 3 --psm 6'  # OEM 3 (default), PSM 6 (assume a single uniform block of text)
+
+#             for page_num in range(1, total_pages + 1):
+#                 log_progress(job_id, "extract_text", f"Converting page {page_num}/{total_pages} to image at 200 DPI")
+#                 images = convert_from_path(file_path, dpi=200, first_page=page_num, last_page=page_num)
+#                 if not images:
+#                     log_progress(job_id, "extract_text", f"No image generated for page {page_num}")
+#                     continue
+
+#                 page_text = pytesseract.image_to_string(images[0], config=custom_config)
+#                 text += f"\n--- Page {page_num} ---\n{page_text}"
+#                 log_progress(job_id, "extract_text", f"Extracted text from page {page_num}/{total_pages}", {
+#                     "page_text_length": len(page_text),
+#                     "page_text": page_text[:500]  # Log first 500 chars for debugging
+#                 })
+#                 del images
+
+#         elif file_extension == ".docx":
+#             log_progress(job_id, "extract_text", "Extracting text from DOCX")
+#             doc = Document(file_path)
+#             for para in doc.paragraphs:
+#                 if para.text.strip():
+#                     text += para.text + "\n"
+#             log_progress(job_id, "extract_text", "Text extracted from DOCX successfully")
+
+#         elif file_extension == ".doc":
+#             log_progress(job_id, "extract_text", "Extracting text from DOC using textract")
+#             text = textract.process(file_path).decode('utf-8')
+#             log_progress(job_id, "extract_text", "Text extracted from DOC successfully")
+
+#         else:
+#             raise Exception(f"Unsupported file format: {file_extension}")
+
+#         log_progress(job_id, "extract_text", "Text extracted successfully", {
+#             "text_length": len(text),
+#             "full_text": text[:1000]  # Log first 1000 chars for debugging
+#         })
+#         return text.strip() or "No text extracted"
+
+#     except Exception as e:
+#         raise Exception(f"Failed to extract text from file: {str(e)}")
+
+
+
+# # --- Keep the SIMPLIFIED clean_gemini_output ---
+# def clean_gemini_output(text: str) -> str:
+#     text = text.strip()
+#     # Remove code fences (common issue)
+#     if text.startswith('```json'):
+#         text = text[7:].rstrip('```')
+#     elif text.startswith('```'):
+#         text = text[3:].rstrip('```')
+#     text = text.strip()
+
+#     # Extract JSON object between the first { and the last }
+#     start = text.find('{')
+#     end = text.rfind('}')
+#     if start != -1 and end != -1 and end > start:
+#         text = text[start:end+1]
+#     else:
+#          log_progress("debug", "clean_gemini_output_warning", "No JSON object markers ({}) found in text", {"text_preview": text[:200]})
+#          # Let json.loads handle potential errors if no markers found
+
+#     # Remove common control characters (safer)
+#     text = re.sub(r'[\x00-\x1F\x7F]', '', text)
+#     # Remove trailing commas before } or ] (relatively safe)
+#     text = re.sub(r',\s*([}\]])', r'\1', text)
+#     return text
+
+# # Helper function to generate the report using Gemini API
+# @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+# def generate_report(resume_text: str, job_description: str, job_id: str) -> dict: # Added job_id parameter
+#     # Use a unique identifier for this specific attempt for easier log tracing
+#     attempt_id = os.urandom(4).hex()
+#     current_step = "init"
+#     try:
+#         current_step = "log_start"
+#         # DETAILED LOG: Function entry
+#         log_progress(job_id, f"generate_report_start_{attempt_id}", "Entering generate_report function")
+
+#         current_step = "log_raw_inputs"
+#         # DETAILED LOG: Log raw inputs before escaping
+#         log_progress(job_id, f"generate_report_raw_inputs_{attempt_id}", "Raw input previews", {
+#             "resume_preview": resume_text[:200],
+#             "jd_preview": job_description[:200]
+#         })
+
+#         # --- Your existing brace escaping ---
+#         current_step = "escape_inputs"
+#         escaped_resume = resume_text.replace('{', '{{').replace('}', '}}')
+#         escaped_job_desc = job_description.replace('{', '{{').replace('}', '}}')
+#         # DETAILED LOG: Log escaped inputs
+#         log_progress(job_id, f"generate_report_escaped_{attempt_id}", "Inputs escaped for formatting", {
+#             "resume_preview": escaped_resume[:200],
+#             "jd_preview": escaped_job_desc[:200]
+#         })
+
+#         # --- Your existing input log (now with attempt_id) ---
+#         current_step = "log_input_preview"
+#         log_progress(job_id, f"generate_report_input_{attempt_id}", "Preparing prompt", { # Added attempt_id
+#             "resume_text_preview": escaped_resume[:1000],
+#             "job_description_preview": escaped_job_desc[:1000]
+#         })
+
+#         # --- Your existing prompt definition ---
+#         prompt_template = """
+# Analyze this resume against the job description and return ONLY a valid JSON response with:
+# - overall_match_score (percentage, 0-100)
+# - matched_skills (array of objects with:
+#     requirement (detailed, e.g., "Python for automation"),
+#     matched ('yes', 'partial', 'no'),
+#     details (specific evidence from resume or "Not mentioned" if absent))
+# - summary (short plain text summary)
+# - companies (array of objects with:
+#     name (string, company name),
+#     designation (string, role at company or "-" if not specified),
+#     years (string, duration like "2019 - 2022" or "-" if not specified))
+# - missing_or_weak_areas (array of strings listing gaps)
+# - top_skills (array of candidate's strongest skills)
+# - development_gaps (array of skills needing improvement)
+# - additional_certifications (array of strings listing certifications not required by JD)
+# - section_wise_scoring (array of objects with main sections, each containing:
+#     {{
+#       section (string),
+#       weightage (percentage),
+#       submenus (array of {{ submenu (string), weightage (percentage of section), score (out of 10), weighted_score (calculated), remarks (string) }})
+#     }})
+# - candidate_name (string, extracted from resume or "Unknown" if not found)
+# - email (string, extracted from resume or "" if not found)
+# - phone_number (string, extracted from resume or "" if not found)
+# - github (string, extracted from resume or "" if not found)
+# - linkedin (string, extracted from resume or "" if not found)
+
+# Job Description: {job_description}
+# Resume: {resume_text}
+
+# Structure section_wise_scoring with main sections and submenus:
+# - Technical Skills (weightage: 40%, submenus: Core Skills 60%, Tools 40%)
+# - Work Experience (weightage: 30%, submenus: Relevant Experience 70%, Duration 30%)
+# - Projects (weightage: 15%, submenus: Personal Projects 50%, Professional Projects 50%)
+# - Education (weightage: 10%, submenus: Degree, Certifications; weightage depends on JD:
+#   - If JD requires a specific certification: Degree 30%, Certifications 70%
+#   - If JD does not require a certification: Degree 50%, Certifications 50%)
+# - Achievements (weightage: 5%, submenus: Awards 50%, Recognitions 50%)
+# - Soft Skills (weightage: 5%, submenus: Leadership 50%, Communication 50%)
+
+# Scoring Guidelines:
+# - 'yes' (8-10/10): Clear evidence of the skill matching the JD.
+# - 'partial' (4-7/10): Implied or indirect evidence.
+# - 'no' (0-3/10): No evidence.
+# - Infer skills from context (e.g., "Python used in automation tasks" matches "Python for automation").
+# - Calculate overall_match_score as the sum of each section's weighted contribution:
+#   - section_score = sum(submenu.weightage * submenu.score) / 100
+#   - overall_match_score = sum(section.weightage * section_score) / 100
+
+# For companies:
+# - Extract company names, designations, and years from work experience sections.
+# - If designation is not explicitly mentioned, use "-".
+# - If years are not specified, use "-".
+# - Example: "Senior Developer at TCS, 2019 - 2022" becomes {{ "name": "TCS", "designation": "Senior Developer", "years": "2019 - 2022" }}
+
+# Use symbols: ✅ for 'yes', ⚠️ for 'partial', ❌ for 'no'. IMPORTANT: Ensure the output is ONLY a single, valid JSON object. All string values within the JSON must be properly escaped according to JSON standards (e.g., use \\" for quotes inside strings, \\\\ for backslashes, etc.). Do NOT include any explanatory text before or after the JSON object.
+# """
+#         current_step = "before_format"
+#         # DETAILED LOG: Before formatting prompt
+#         log_progress(job_id, f"generate_report_before_format_{attempt_id}", "About to format the prompt string")
+
+#         # --- Your existing prompt formatting ---
+#         prompt = prompt_template.format(job_description=escaped_job_desc, resume_text=escaped_resume)
+
+#         current_step = "after_format"
+#         # DETAILED LOG: After formatting prompt
+#         log_progress(job_id, f"generate_report_after_format_{attempt_id}", "Prompt string formatted", {"prompt_preview": prompt[:500]})
+
+#         # --- Your existing Gemini call ---
+#         current_step = "before_api_call"
+#         # DETAILED LOG: Before calling Gemini API
+#         log_progress(job_id, f"generate_report_before_api_call_{attempt_id}", "About to call gemini_model.generate_content()")
+#         response = gemini_model.generate_content(prompt)
+#         current_step = "after_api_call"
+#         # DETAILED LOG: After calling Gemini API
+#         log_progress(job_id, f"generate_report_after_api_call_{attempt_id}", "Returned from gemini_model.generate_content()")
+
+#         raw_gemini_text = response.text # Get the raw text
+
+#         # --- Your existing raw output log (now with attempt_id) ---
+#         current_step = "log_raw_output"
+#         log_progress(job_id, f"generate_report_raw_output_{attempt_id}", "Raw Gemini response received", { # Added attempt_id
+#             "raw_output_preview": raw_gemini_text[:2000]
+#         })
+
+#         # --- Your existing cleaning call ---
+#         current_step = "clean_output"
+#         gemini_output = clean_gemini_output(raw_gemini_text)
+#         # DETAILED LOG: After cleaning output
+#         log_progress(job_id, f"generate_report_cleaned_output_{attempt_id}", "Cleaned Gemini response", { # Added attempt_id
+#             "cleaned_output_preview": gemini_output[:2000]
+#         })
+
+#         # --- Your existing JSON parsing block ---
+#         current_step = "parse_json"
+#         try:
+#             report = json.loads(gemini_output)
+#         except json.JSONDecodeError as e:
+#             # DETAILED LOG: JSON parsing failed
+#             log_progress(job_id, f"generate_report_parse_error_{attempt_id}", f"Failed to parse JSON: {str(e)}", { # Added attempt_id
+#                 "parsing_error": str(e),
+#                 "cleaned_output_preview": gemini_output[:2000]
+#             })
+#             current_step = "parse_fallback"
+#             # DETAILED LOG: Attempting fallback parsing
+#             log_progress(job_id, f"generate_report_fallback_{attempt_id}", "Attempting fallback parsing with ast.literal_eval") # Added attempt_id
+#             try:
+#                 report = ast.literal_eval(gemini_output)
+#                 if not isinstance(report, dict):
+#                     raise ValueError("Fallback parsing did not yield a dictionary")
+#                 # DETAILED LOG: Fallback parsing succeeded
+#                 log_progress(job_id, f"generate_report_fallback_success_{attempt_id}", "Fallback parsing successful") # Added attempt_id
+#             except (ValueError, SyntaxError) as fallback_e:
+#                 # DETAILED LOG: Fallback parsing failed
+#                 log_progress(job_id, f"generate_report_fallback_error_{attempt_id}", f"Fallback parsing failed: {str(fallback_e)}", { # Added attempt_id
+#                     "fallback_error": str(fallback_e),
+#                     "cleaned_output_preview": gemini_output[:2000]
+#                 })
+#                 raise Exception(f"Invalid JSON response from Gemini after cleaning and fallback: Original error: {str(e)}. Fallback error: {str(fallback_e)}") from e # Keep combined error
+
+#         # --- Your existing parsed report log (now with attempt_id) ---
+#         current_step = "log_parsed_report"
+#         log_progress(job_id, f"generate_report_parsed_{attempt_id}", "Parsed report structure", { # Added attempt_id
+#             "report_keys": list(report.keys())
+#         })
+
+#         # --- Your existing validation ---
+#         current_step = "validate_report"
+#         required_fields = [
+#             "overall_match_score", "matched_skills", "summary", "companies",
+#             "missing_or_weak_areas", "top_skills", "development_gaps",
+#             "additional_certifications", "section_wise_scoring",
+#             "candidate_name", "email","phone_number", "github", "linkedin"
+#         ]
+#         for field in required_fields:
+#             if field not in report:
+#                 # DETAILED LOG: Validation failed
+#                 log_progress(job_id, f"generate_report_validation_error_{attempt_id}", f"Missing field in report: {field}", { # Added attempt_id
+#                     "report_keys": list(report.keys())
+#                 })
+#                 raise Exception(f"Missing required field in Gemini response: {field}")
+
+#         # --- Your existing company normalization ---
+#         current_step = "normalize_companies"
+#         # Define normalization func locally or ensure it's imported/available
+#         # Using a local definition here to be self-contained:
+#         def normalize_company_name_local(name):
+#             if not isinstance(name, str): # Handle potential non-string names
+#                 return "-"
+#             lower_name = name.lower().strip()
+#             # Add your specific rules here if needed
+#             if lower_name in ["infosys", "infosys ltd"]:
+#                 return "Infosys"
+#             if lower_name == "infosys infotech":
+#                 return "Infosys Infotech"
+#             # General cleanup (optional, adjust as needed)
+#             normalized = re.sub(r'\s*(ltd|limited|inc|corp|corporation|llc|co)\.?\s*$', '', lower_name, flags=re.IGNORECASE)
+#             normalized = re.sub(r'[^\w\s-]', '', normalized) # Keep hyphens maybe?
+#             normalized = ' '.join(normalized.split()) # Consolidate whitespace
+#             return normalized.strip() if normalized else name.strip() # Return original if normalization results in empty
+
+#         # Ensure report["companies"] exists and is a list before processing
+#         if "companies" in report and isinstance(report["companies"], list):
+#             processed_companies = []
+#             for company in report["companies"]:
+#                  # Ensure company is a dict and has 'name' before processing
+#                 if isinstance(company, dict) and "name" in company:
+#                     processed_companies.append({
+#                         "name": company["name"], # Keep original name in report for display?
+#                         "normalized_name_for_dedup": normalize_company_name_local(company["name"]), # Use a temp key for dedup logic
+#                         "designation": company.get("designation", "-"),
+#                         "years": company.get("years", "-")
+#                     })
+#                 # else: log warning maybe? Skipping invalid company entry
+
+#             # Deduplicate based on the temporary normalized name, keeping the latest entry
+#             unique_companies_final = []
+#             seen_normalized_names = set()
+#             for company in reversed(processed_companies):
+#                 norm_name = company["normalized_name_for_dedup"]
+#                 if norm_name not in seen_normalized_names:
+#                     # Remove the temporary key before adding to final list
+#                     del company["normalized_name_for_dedup"]
+#                     unique_companies_final.append(company)
+#                     seen_normalized_names.add(norm_name)
+#             report["companies"] = list(reversed(unique_companies_final))
+#         else:
+#              # Handle case where 'companies' is missing or not a list
+#              report["companies"] = []
+#              log_progress(job_id, f"generate_report_normalization_warning_{attempt_id}", "Key 'companies' missing or not a list in Gemini report", {
+#                  "report_keys": list(report.keys())
+#              })
+
+
+#         # --- Your existing final parsed report log (now with attempt_id) ---
+#         # This might log large amounts of data, consider limiting it
+#         current_step = "log_final_report"
+#         try:
+#             report_preview = json.dumps(report)[:2000] # Log preview
+#         except Exception:
+#             report_preview = "Error creating report preview"
+#         log_progress(job_id, f"generate_report_final_parsed_{attempt_id}", "Final processed report preview", { # Added attempt_id
+#             "report_preview": report_preview
+#         })
+
+#         current_step = "final_success"
+#         # DETAILED LOG: Final success
+#         log_progress(job_id, f"generate_report_success_{attempt_id}", "Report generated and parsed successfully")
+#         return report
+
+#     # --- Updated Exception Block ---
+#     except Exception as e:
+#         # Log the exception with traceback and the last known step
+#         tb_str = traceback.format_exc()
+#         # Use logger directly for critical error logging to avoid log_progress issues
+#         logger.error(f"Job {job_id} - generate_report_error_{attempt_id}: Exception caught in generate_report at step '{current_step}'")
+#         logger.error(f"Job {job_id} - Error Type: {type(e).__name__}")
+#         logger.error(f"Job {job_id} - Error Message: {str(e)}")
+#         logger.error(f"Job {job_id} - Traceback:\n{tb_str}")
+
+#         # Also try to log via log_progress for Redis record
+#         log_progress(job_id, f"generate_report_error_{attempt_id}", f"Exception caught at step '{current_step}': {str(e)}", {
+#             "error_type": type(e).__name__,
+#             "error_message": str(e),
+#             "last_step": current_step,
+#             "traceback": tb_str
+#         })
+#         # Re-raise the exception for the retry mechanism
+#         raise Exception(f"Failed to generate report at step '{current_step}': {str(e)}") from e
+
+# # --- UPDATED save_report_as_pdf using Platypus for Visual Appeal ---
+# def save_report_as_pdf(report: dict, output_path: str, job_id: str): # Added job_id for logging
+#     try:
+#         log_progress(job_id, "pdf_generation_start", "Starting PDF generation with Platypus")
+#         doc = SimpleDocTemplate(output_path, pagesize=letter,
+#                                 leftMargin=0.75*inch, rightMargin=0.75*inch,
+#                                 topMargin=1.0*inch, bottomMargin=0.75*inch)
+#         story = []
+#         bullet = '•' # Bullet character
+
+#         # --- Build Story (Content) ---
+
+#         # 1. Report Title
+#         story.append(Paragraph("Resume Analysis Report", styles['ReportTitle']))
+
+#         # 2. Candidate Details Table
+#         story.append(Paragraph("Candidate Details", styles['SectionHeading']))
+#         candidate_data = [
+#             [Paragraph("<b>Name:</b>", styles['TableCell']), Paragraph(report.get('candidate_name', 'N/A'), styles['TableCell'])],
+#             [Paragraph("<b>Email:</b>", styles['TableCell']), Paragraph(report.get('email', 'N/A'), styles['TableCell'])],
+#             [Paragraph("<b>Phone:</b>", styles['TableCell']), Paragraph(report.get('phone_number', 'N/A'), styles['TableCell'])],
+#             [Paragraph("<b>LinkedIn:</b>", styles['TableCell']), Paragraph(report.get('linkedin', 'N/A'), styles['TableCell'])],
+#             [Paragraph("<b>GitHub:</b>", styles['TableCell']), Paragraph(report.get('github', 'N/A'), styles['TableCell'])],
+#         ]
+#         candidate_table = Table(candidate_data, colWidths=[1.2*inch, 5.8*inch])
+#         candidate_table.setStyle(TableStyle([
+#             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+#             ('LEFTPADDING', (0, 0), (-1, -1), 0),
+#             ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+#             ('TOPPADDING', (0, 0), (-1, -1), 0),
+#         ]))
+#         story.append(candidate_table)
+#         story.append(Spacer(1, 0.25*inch))
+
+#         # 3. Overall Score (Highlighted Box)
+#         score_data = [[
+#             Paragraph("Overall Match Score", styles['ScoreLabel']),
+#             Paragraph(f"{report.get('overall_match_score', 0)}%", styles['ScoreHighlight'])
+#         ]]
+#         score_table = Table(score_data, colWidths=[5*inch, 2*inch])
+#         score_table.setStyle(TableStyle([
+#              ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+#              ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F0F3FF')), # Light Blue/Lavender background
+#              ('LEFTPADDING', (0, 0), (0, 0), 12),
+#              ('RIGHTPADDING', (1, 0), (1, 0), 12),
+#              ('TOPPADDING', (0, 0), (-1, -1), 10),
+#              ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+#              # ('ROUNDEDCORNERS', (0, 0), (-1,-1), 6), # Requires reportlab >= 3.6, uncomment if available
+#              ('LINEBELOW', (0,0), (-1,0), 1, colors.HexColor('#4361EE')), # Underline below score box
+#         ]))
+#         story.append(score_table)
+#         story.append(Spacer(1, 0.25*inch))
+
+#         # 4. Overall Summary
+#         story.append(Paragraph("Overall Summary", styles['SectionHeading']))
+#         story.append(Paragraph(report.get('summary', "N/A"), styles['Body']))
+#         story.append(Spacer(1, 0.25*inch))
+
+#         # 5. Skills Analysis (Side-by-side Table)
+#         story.append(Paragraph("Skills Overview", styles['SectionHeading']))
+
+#         top_skills_list = report.get("top_skills", [])
+#         missed_skills_list = report.get("missing_or_weak_areas", [])
+
+#         # Create Paragraph lists for each cell
+#         top_skills_flowables = [Paragraph("<b>Top Skills</b>", styles['SubHeading'])]
+#         if top_skills_list:
+#             for skill in top_skills_list:
+#                 top_skills_flowables.append(Paragraph(f"{bullet} {skill}", styles['ListItem']))
+#         else:
+#             top_skills_flowables.append(Paragraph("N/A", styles['Body']))
+
+#         missed_skills_flowables = [Paragraph("<b>Missed / Weak Areas</b>", styles['SubHeading'])]
+#         if missed_skills_list:
+#             for area in missed_skills_list:
+#                 missed_skills_flowables.append(Paragraph(f"{bullet} {area}", styles['ListItem']))
+#         else:
+#              missed_skills_flowables.append(Paragraph("N/A", styles['Body']))
+
+#         # Add KeepTogether to try and keep skill lists from breaking across pages awkwardly
+#         skills_data = [[top_skills_flowables, missed_skills_flowables]]
+        
+#         skills_table = Table(skills_data, colWidths=[3.5*inch, 3.5*inch])
+#         skills_table.setStyle(TableStyle([
+#             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+#             ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#D9E2FF')), # Light blue border
+#             # ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.lightgrey), # Optional inner line
+#             ('LEFTPADDING', (0, 0), (-1, -1), 12),
+#             ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+#             ('TOPPADDING', (0, 0), (-1, -1), 8),
+#             ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+#         ]))
+#         story.append(skills_table)
+#         story.append(Spacer(1, 0.25*inch))
+
+
+#         # 6. Matched Skills (Detailed Table)
+#         story.append(Paragraph("Detailed Skill Match", styles['SectionHeading']))
+#         matched_skills_list = report.get("matched_skills", [])
+#         if matched_skills_list:
+#             matched_skills_data = [[
+#                 Paragraph("Requirement", styles['TableHeader']),
+#                 Paragraph("Match", styles['TableHeader']),
+#                 Paragraph("Evidence / Details", styles['TableHeader'])
+#             ]]
+#             status_map = {"yes": "✅ Yes", "partial": "⚠️ Partial", "no": "❌ No"}
+#             for skill in matched_skills_list:
+#                 status = status_map.get(skill.get("matched", "no"), "❓")
+#                 req = Paragraph(skill.get('requirement', 'N/A'), styles['TableCell'])
+#                 det = Paragraph(skill.get('details', 'N/A'), styles['TableCell'])
+#                 matched_skills_data.append([req, Paragraph(status, styles['TableCell']), det])
+
+#             matched_table = Table(matched_skills_data, colWidths=[2.5*inch, 0.8*inch, 3.7*inch])
+#             matched_table.setStyle(TableStyle([
+#                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4361EE')), # Header background
+#                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+#                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+#                 ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+#                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+#                 ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+#                 ('TOPPADDING', (0, 0), (-1, 0), 6),
+#                 # Alternating row colors
+#                 # ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F0F3FF')]),
+#                 ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+#                 ('LEFTPADDING', (0, 0), (-1, -1), 6),
+#                 ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+#                 ('TOPPADDING', (0, 1), (-1, -1), 4), # Padding for data rows
+#                 ('BOTTOMPADDING', (0, 1), (-1, -1), 4),
+#             ]))
+#             story.append(matched_table)
+#         else:
+#             story.append(Paragraph("No detailed skill matching data available.", styles['Body']))
+#         story.append(Spacer(1, 0.25*inch))
+
+
+#         # 7. Companies Mentioned
+#         story.append(Paragraph("Companies Mentioned", styles['SectionHeading']))
+#         companies_list = report.get("companies", [])
+#         if companies_list:
+#              company_items = []
+#              for company in companies_list:
+#                  name = company.get('name', 'N/A')
+#                  des = company.get('designation', '-')
+#                  yrs = company.get('years', '-')
+#                  company_items.append(Paragraph(f"{bullet} {name} ({des}, {yrs})", styles['ListItem']))
+#              story.extend(company_items) # Add list items to story
+#         else:
+#              story.append(Paragraph("N/A", styles['Body']))
+#         story.append(Spacer(1, 0.25*inch))
+
+#         # 8. Development Gaps
+#         story.append(Paragraph("Development Gaps", styles['SectionHeading']))
+#         gaps_list = report.get("development_gaps", [])
+#         if gaps_list:
+#             gap_items = []
+#             for gap in gaps_list:
+#                  gap_items.append(Paragraph(f"{bullet} {gap}", styles['ListItem']))
+#             story.extend(gap_items)
+#         else:
+#             story.append(Paragraph("N/A", styles['Body']))
+#         story.append(Spacer(1, 0.25*inch))
+
+#         # 9. Additional Certifications
+#         story.append(Paragraph("Additional Certifications", styles['SectionHeading']))
+#         certs_list = report.get("additional_certifications", [])
+#         if certs_list:
+#             cert_items = []
+#             for cert in certs_list:
+#                  cert_items.append(Paragraph(f"{bullet} {cert}", styles['ListItem']))
+#             story.extend(cert_items)
+#         else:
+#             story.append(Paragraph("N/A", styles['Body']))
+#         story.append(Spacer(1, 0.25*inch))
+
+
+#         # 10. Section-Wise Scoring (Improved Table Layout)
+#         story.append(Paragraph("Section-Wise Scoring", styles['SectionHeading']))
+#         scoring_list = report.get("section_wise_scoring", [])
+#         if scoring_list:
+#             scoring_data = [[
+#                 Paragraph("Section", styles['TableHeader']),
+#                 Paragraph("Sub-Section", styles['TableHeader']),
+#                 Paragraph("Score", styles['TableHeader']),
+#                 Paragraph("Remarks", styles['TableHeader']),
+#             ]]
+#             for section in scoring_list:
+#                 sec_name = section.get('section', 'N/A')
+#                 sec_weight = section.get('weightage', 0)
+#                 first_row_for_section = True
+#                 for submenu in section.get("submenus", []):
+#                     sub_name = submenu.get('submenu', 'N/A')
+#                     sub_score = submenu.get('score', 0)
+#                     sub_rem = submenu.get('remarks', '')
+#                     # Display main section only on the first row of its submenus
+#                     section_display = Paragraph(f"<b>{sec_name}</b><br/>({sec_weight}%)", styles['TableCell']) if first_row_for_section else ""
+#                     scoring_data.append([
+#                          section_display,
+#                          Paragraph(sub_name, styles['TableCell']),
+#                          Paragraph(f"{sub_score}/10", styles['TableCell']),
+#                          Paragraph(sub_rem, styles['TableCell'])
+#                     ])
+#                     first_row_for_section = False # Only show main section name once
+
+#             scoring_table = Table(scoring_data, colWidths=[1.5*inch, 1.7*inch, 0.8*inch, 3.0*inch])
+#             scoring_table.setStyle(TableStyle([
+#                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4361EE')), # Header background
+#                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+#                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+#                 ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+#                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+#                 ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+#                 ('TOPPADDING', (0, 0), (-1, 0), 6),
+#                 # ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F0F3FF')]),
+#                 ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+#                 ('LEFTPADDING', (0, 0), (-1, -1), 6),
+#                 ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+#                 ('TOPPADDING', (0, 1), (-1, -1), 4), # Padding for data rows
+#                 ('BOTTOMPADDING', (0, 1), (-1, -1), 4),
+#                 # Span the Section cell across rows if needed (more complex)
+#             ]))
+#             story.append(scoring_table)
+#         else:
+#             story.append(Paragraph("N/A", styles['Body']))
+#         story.append(Spacer(1, 0.25*inch))
+
+
+#         # --- Build the PDF ---
+#         log_progress(job_id, "pdf_generation_build", "Building PDF document with Platypus")
+#         doc.build(story, onFirstPage=add_watermark, onLaterPages=add_watermark)
+#         log_progress(job_id, "pdf_generation_success", "PDF generated successfully")
+
+#     except Exception as e:
+#         tb_str = traceback.format_exc()
+#         logger.error(f"Job {job_id} - Failed to save report as PDF: {str(e)}")
+#         logger.error(f"Job {job_id} - Traceback:\n{tb_str}")
+#         log_progress(job_id, "pdf_generation_error", f"Failed to save report as PDF: {str(e)}", {
+#             "error_type": type(e).__name__,
+#             "error_message": str(e),
+#             "traceback": tb_str
+#         })
+#         raise Exception(f"Failed to save report as PDF: {str(e)}") from e
+
+# # END OF NEW save_report_as_pdf FUNCTION
+# # Helper function to upload report to Supabase Storage
+# @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+# def upload_report(report_path: str, destination_path: str, job_id: str):
+#     try:
+#         # --- NEW LOGGING ---
+#         file_exists = os.path.exists(report_path)
+#         file_size = os.path.getsize(report_path) if file_exists else -1
+#         log_progress(job_id, "upload_report_info", "Preparing to upload report", {
+#             "local_report_path": report_path,
+#             "destination_path": destination_path,
+#             "local_file_exists": file_exists,
+#             "local_file_size_bytes": file_size
+#         })
+#         if not file_exists or file_size <= 0:
+#              log_progress(job_id, "upload_report_error", "Local report file missing or empty", {"path": report_path, "size": file_size})
+#              raise Exception(f"Local report file missing or empty: {report_path}")
+#         # --- END NEW LOGGING ---
+#         with open(report_path, "rb") as f:
+#             response = supabase.storage.from_(SUPABASE_STORAGE_BUCKET).upload(
+#                 path=destination_path,
+#                 file=f,
+#                 # --- Ensure file_options are included ---
+#                 file_options={
+#                     "upsert": "true", # Allow overwriting
+#                     "content-type": "application/pdf" # Set correct MIME type
+#                 }
+#                 # ---
+#             )
+#             log_progress(job_id, "upload_report_success", "Upload API call successful", {"destination": destination_path})
+#             if hasattr(response, 'status_code') and response.status_code != 200:
+#                 raise Exception(f"Upload failed with status {response.status_code}: {response.json()}")
+#         return response     
+#     except Exception as e:
+#         tb_str = traceback.format_exc()
+#         log_progress(job_id, "upload_report_exception", f"Failed to upload report to Supabase: {str(e)}", {
+#              "local_report_path": report_path,
+#              "destination_path": destination_path,
+#              "error_type": type(e).__name__,
+#              "error_message": str(e),
+#              "traceback": tb_str
+#         })
+#         raise Exception(f"Failed to upload report to Supabase ({type(e).__name__}): {str(e)}") from e
+
+# # Helper function to normalize company names
+# def normalize_company_name(name: str) -> str:
+#     """Normalize company name by converting to lowercase and removing common suffixes."""
+#     if not name:
+#         return ""
+#     # Convert to lowercase and strip whitespace
+#     normalized = name.lower().strip()
+#     # Remove common suffixes (ltd, limited, inc, etc.)
+#     normalized = re.sub(r'\s*(ltd|limited|inc|corp|corporation|llc|co)\.?\s*$', '', normalized, flags=re.IGNORECASE)
+#     # Remove punctuation
+#     normalized = re.sub(r'[^\w\s]', '', normalized)
+#     return normalized
+# # Background task to process the analysis
+# # PASTE THIS ENTIRE FUNCTION INTO tasks.py, REPLACING YOUR CURRENT process_analysis
+
+# # PASTE THIS ENTIRE FUNCTION INTO tasks.py, REPLACING THE OLD process_analysis
+# # PASTE THIS ENTIRE FUNCTION INTO tasks.py, REPLACING THE OLD process_analysis
+
+# # PASTE THIS ENTIRE FUNCTION INTO tasks.py, REPLACING THE OLD process_analysis
+
+# # Background task to process the analysis
+# def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_description_from_request: str):
+#     logger.info("Starting process_analysis for job_id: %s, candidate_id: %s", job_id, candidate_id)
+#     local_resume_path = None
+#     local_report_path = None
+
+#     try:
+#         # --- Entire process is now within one main try block ---
+
+#         # Log task initiation
+#         log_progress(job_id, "init", "Task started", {
+#             "candidate_id": candidate_id, "resume_path": resume_path
+#         })
+
+#         # Step 1: Download Resume (Checks for existence via FileNotFoundinStorageError)
+#         log_progress(job_id, "download_resume", f"Attempting download: {resume_path}")
+#         try:
+#             local_resume_path = download_resume(resume_path) # Use the modified download_resume
+#             log_progress(job_id, "download_resume_success", "Resume downloaded", {
+#                 "local_path": local_resume_path,
+#                 "size": os.path.getsize(local_resume_path) if local_resume_path and os.path.exists(local_resume_path) else -1
+#             })
+#         except FileNotFoundInStorageError as resume_not_found_err:
+#             # Log clearly that the process is stopping due to missing file
+#             log_progress(job_id, "error_resume_not_found", f"STOPPING TASK - Resume not found: {resume_path}. No DB changes will be made for this attempt.")
+#             logger.error(f"Job {job_id} - STOPPING TASK - Resume not found: {resume_path} - {resume_not_found_err}")
+#             # Return failure status immediately, NO DB updates.
+#             return {"status": "failed", "candidate_id": candidate_id, "error": str(resume_not_found_err)}
+#         # Let other download errors (network, permission) be caught by the main except block below
+
+#         # Step 2: Validate job_id exists and fetch description
+#         log_progress(job_id, "fetch_jd", f"Fetching description for job_id {job_id}")
+#         job_response = supabase.table("hr_jobs").select("description").eq("id", job_id).execute()
+#         if not job_response.data or not job_response.data[0].get("description"):
+#             raise Exception(f"Job description not found for job {job_id}") # Caught below
+#         job_description_from_db = job_response.data[0]["description"]
+#         log_progress(job_id, "fetch_jd_success", "Fetched job description")
+
+#         # Step 3: Extract text
+#         log_progress(job_id, "extract_text", "Extracting text from resume")
+#         resume_text = extract_text_from_file(local_resume_path, job_id)
+#         log_progress(job_id, "extract_text_success", "Text extracted", {"length": len(resume_text)})
+
+#         # Step 4: Generate report
+#         log_progress(job_id, "generate_report", "Generating report with Gemini")
+#         report = generate_report(resume_text, job_description_from_db, job_id)
+#         log_progress(job_id, "generate_report_success", "Report generated", {"score": report.get("overall_match_score", "N/A")})
+
+#         # Step 5: Ensure candidate exists in hr_candidates (Optional - fails if cannot create)
+#         log_progress(job_id, "check_candidate", f"Checking/creating candidate {candidate_id}")
+#         candidate_check_resp = supabase.table("hr_candidates").select("id").eq("id", candidate_id).execute()
+#         if not candidate_check_resp.data:
+#              log_progress(job_id, "create_candidate", f"Candidate {candidate_id} not found, creating...")
+#              insert_data = { "id": candidate_id, "name": report.get("candidate_name", "Unknown"), "email": report.get("email") or f"unknown_{candidate_id}@example.com", "phone_number": report.get("phone_number"), "linkedin_url": report.get("linkedin"), "github_url": report.get("github") }
+#              supabase.table("hr_candidates").insert(insert_data).execute() # Let exception propagate if fails
+#              log_progress(job_id, "create_candidate_success", f"Created new candidate record")
+
+#         # Step 6: Save report as PDF
+#         log_progress(job_id, "save_report", "Saving report as PDF")
+#         report_filename = f"report_{job_id}_{candidate_id}.pdf"
+#         local_report_path = f"/tmp/{report_filename}"
+#         save_report_as_pdf(report, local_report_path, job_id)
+#         log_progress(job_id, "save_report_success", "Report saved successfully")
+
+#         # Step 7: Upload report to Supabase Storage
+#         log_progress(job_id, "upload_report", "Uploading report to Supabase Storage")
+#         report_destination_path = f"{SUPABASE_REPORT_PATH_PREFIX}/{job_id}/{report_filename}"
+#         upload_report(local_report_path, report_destination_path, job_id)
+#         log_progress(job_id, "upload_report_success", "Report uploaded successfully")
+
+#                 # --- REVISED Step 4: Save and check company associations ---
+#         log_progress(job_id, "process_companies", "Processing company associations")
+#         company_entries = [] # To store data for candidate_companies table
+#         raw_companies = report.get("companies", []) # Get companies list from Gemini report
+
+#         if isinstance(raw_companies, list):
+#             for company in raw_companies:
+#                 # Ensure entry is a dictionary and has a non-empty 'name'
+#                 if isinstance(company, dict) and company.get("name"):
+#                     company_name = company["name"]
+#                     # Normalize the name for consistency if needed elsewhere, but use original 'name' for upsert/lookup
+#                     normalized_name = normalize_company_name(company_name)
+
+#                     try:
+#                         # Prepare company data for upsert into 'companies' table
+#                         company_data_to_upsert = {
+#                             "name": company_name, # This column has the UNIQUE constraint
+#                             "normalized_name": normalized_name # Include/update normalized name
+#                             # Add other company columns here if they exist in your 'companies' table
+#                         }
+
+#                         # Perform an upsert based on the 'name' constraint
+#                         log_progress(job_id, "process_companies_upsert", f"Upserting company based on name: {company_name}")
+#                         upsert_response = supabase.table("companies").upsert(
+#                             company_data_to_upsert,
+#                             on_conflict="name" # Target the actual unique constraint column
+#                         ).execute()
+#                         # Let potential APIErrors from upsert propagate to the main except block
+
+#                         # After upsert, fetch the ID using the unique 'name' column
+#                         # This ensures we have the correct ID whether inserted or updated
+#                         log_progress(job_id, "process_companies_fetch_id", f"Fetching ID for company: {company_name}")
+#                         fetch_response = supabase.table("companies").select("id").eq("name", company_name).limit(1).maybe_single().execute()
+
+#                         if fetch_response.data:
+#                             company_id = fetch_response.data["id"]
+#                             log_progress(job_id, "process_companies_get_id_success", f"Got company ID {company_id} for '{company_name}'")
+#                             # Prepare the entry for the candidate_companies association table
+#                             company_entries.append({
+#                                 "candidate_id": candidate_id,
+#                                 "job_id": job_id, # Make sure job_id is part of the PK/constraint here too
+#                                 "company_id": company_id,
+#                                 "designation": company.get("designation", "-"),
+#                                 "years": company.get("years", "-")
+#                             })
+#                         else:
+#                             # If fetching ID failed after a successful-looking upsert, something is wrong
+#                             log_progress(job_id, "process_companies_get_id_error", f"Could not retrieve company ID after upsert for '{company_name}'")
+#                             # Raise an error as we cannot proceed without the company ID
+#                             raise Exception(f"Could not retrieve company ID after upsert for: {company_name}")
+
+#                     except Exception as company_processing_exc:
+#                          # Catch errors during upsert or fetch and fail the task
+#                          log_progress(job_id, "process_companies_upsert_fetch_error", f"Error upserting/fetching company '{company_name}': {str(company_processing_exc)}")
+#                          raise # Re-raise to fail the whole task
+
+#             # After looping through all companies, upsert the associations
+#             if company_entries:
+#                 log_progress(job_id, "save_candidate_companies_start", "Upserting candidate_companies associations", {"count": len(company_entries)})
+#                 try:
+#                     # Ensure the on_conflict columns match your actual unique constraint in candidate_companies
+#                     assoc_response = supabase.table("candidate_companies").upsert(
+#                         company_entries,
+#                         on_conflict="candidate_id,job_id,company_id" # Adjust if constraint is different
+#                     ).execute()
+#                     log_progress(job_id, "save_candidate_companies_success", "Upserted candidate_companies successfully")
+#                 except Exception as company_assoc_upsert_exc:
+#                     log_progress(job_id, "save_candidate_companies_error", f"Exception during candidate_companies upsert: {str(company_assoc_upsert_exc)}")
+#                     raise # Fail the whole task if association upsert fails
+#             else:
+#                  log_progress(job_id, "save_candidate_companies_skip", "No valid company associations to save")
+#         else:
+#              log_progress(job_id, "process_companies_warning", "Report 'companies' field is not a list or missing")
+#         log_progress(job_id, "process_companies_finished", "Finished processing companies")
+#         # --- END REVISED Step 4 ---
+#         # --- FINAL STEP: Prepare and Upsert analysis data (ONLY IF ALL ABOVE SUCCEEDED) ---
+#         log_progress(job_id, "prepare_final_payload", "Preparing final payload for candidate_resume_analysis")
+#         supabase_project_id = os.getenv("SUPABASE_PROJECT_ID", "[YOUR_PROJECT_ID]") # Provide default
+#         if supabase_project_id == "[YOUR_PROJECT_ID]":
+#              try: supabase_project_id = SUPABASE_URL.split('.')[0].split('//')[1]
+#              except Exception: log_progress(job_id, "warning", "Could not determine SUPABASE_PROJECT_ID for report URL")
+#         report_public_url = f"https://{supabase_project_id}.supabase.co/storage/v1/object/public/{SUPABASE_STORAGE_BUCKET}/{report_destination_path}"
+#         resume_payload = {
+#             "job_id": job_id, 
+#             "candidate_id": candidate_id, 
+#             "resume_text": resume_text or None,
+#             "overall_score": round(report.get("overall_match_score", 0)),
+#             "matched_skills": report.get("matched_skills", []), 
+#             "summary": report.get("summary"),
+#             "missing_or_weak_areas": report.get("missing_or_weak_areas", []),
+#             "top_skills": report.get("top_skills", []), 
+#             "development_gaps": report.get("development_gaps", []),
+#             "additional_certifications": report.get("additional_certifications", []),
+#             "section_wise_scoring": report.get("section_wise_scoring", {}),
+#             "candidate_name": report.get("candidate_name", "Unknown"), 
+#             "email": report.get("email", ""),
+#             "phone_number": report.get("phone_number", ""), 
+#             "github": report.get("github", ""),
+#             "linkedin": report.get("linkedin", ""), 
+#             "report_url": report_public_url,
+#             "has_validated_resume": True, # Set final status to True here
+#             "updated_at": datetime.datetime.utcnow().isoformat()
+#         }
+#         log_progress(job_id, "save_final_analysis", "Upserting final candidate_resume_analysis data")
+#         # This is the ONLY database write for analysis status
+#         analysis_response = supabase.table("candidate_resume_analysis").upsert(
+#             resume_payload, on_conflict="job_id,candidate_id"
+#         ).execute() # Let exception propagate if this fails
+#         log_progress(job_id, "save_final_analysis_response", "Final upsert response", {"data": str(analysis_response.data), "count": str(analysis_response.count)})
+
+#         # If execution reaches here, the entire process was successful
+#         log_progress(job_id, "success", "Task completed successfully and final data saved.")
+#         return {"status": "finished", "candidate_id": candidate_id}
+
+#     except Exception as e:
+#         # --- Main Exception Handler ---
+#         # This block runs if ANY error occurred AFTER the initial resume download check
+#         # OR if the initial download check raised something OTHER than FileNotFoundInStorageError
+#         tb_str = traceback.format_exc()
+#         error_message = f"Task failed during processing: {str(e)}"
+#         logger.error(f"Job {job_id} - process_analysis_error: {error_message} for candidate {candidate_id}")
+#         logger.error(f"Job {job_id} - Traceback:\n{tb_str}")
+#         # Log the error, but DO NOT update the database here.
+#         log_progress(job_id, "error_processing", error_message, {"error_type": type(e).__name__, "traceback": tb_str})
+
+#         # Return failure status for RQ result - NO database changes are made in this block
+#         return {"status": "failed", "candidate_id": candidate_id, "error": str(e)}
+
+#     finally:
+#         # Cleanup logic remains the same - always runs
+#         try:
+#             log_progress(job_id, "cleanup", "Cleaning up temporary files")
+#             if local_resume_path and os.path.exists(local_resume_path): os.remove(local_resume_path)
+#             if local_report_path and os.path.exists(local_report_path): os.remove(local_report_path)
+#             log_progress(job_id, "cleanup", "Temporary files removed successfully")
+#         except Exception as cleanup_e:
+#             log_progress(job_id, "cleanup_error", f"Failed to clean up temporary files: {str(cleanup_e)}")
+
+# # END OF UPDATED process_analysis FUNCTION
+
+
+# tasks.py - COMPLETE FILE
+
+# --- Imports ---
 import os
 import json
 import re
 import logging
 import datetime
-from pdf2image import convert_from_path
-from pdf2image.exceptions import PDFPageCountError
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
-from tenacity import retry, stop_after_attempt, wait_exponential
-import pytesseract
-from docx import Document
-import textract
+import subprocess # For LibreOffice conversion
+import io # For potential image data handling
 import ast
 import traceback
 
+# PDF/Office Processing
+from pdf2image import convert_from_path, pdfinfo_from_path
+from pdf2image.exceptions import PDFPageCountError
+import pytesseract
+from docx import Document
+import textract # Keep for potential fallback
 
-# Import shared objects from config.py
-from config import gemini_model, supabase, SUPABASE_STORAGE_BUCKET, SUPABASE_REPORT_PATH_PREFIX, redis_conn
+# ReportLab / Platypus for PDF Generation
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, PageBreak, KeepTogether
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+from reportlab.lib.units import inch
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
 
+# Async/Retry/Queueing
+from tenacity import retry, stop_after_attempt, wait_exponential
+from config import redis_conn # Assuming config.py defines redis_conn
 
-# --- Add Custom Exception ---
+# API Clients
+from config import gemini_model, supabase, SUPABASE_STORAGE_BUCKET, SUPABASE_REPORT_PATH_PREFIX, SUPABASE_URL # Import needed variables
+
+# --- Custom Exception ---
 class FileNotFoundInStorageError(Exception):
     """Custom exception for when a file is not found in Supabase Storage."""
     pass
-# --- End Custom Exception ---
 
-# Set up logging
+# --- Logging Setup ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- Define Styles (Can be done outside the function for reuse) ---
+# --- ReportLab Styles ---
 styles = getSampleStyleSheet()
-
 # Custom Styles - Refined for Appeal
-styles.add(ParagraphStyle(name='ReportTitle',
-                          parent=styles['h1'],
-                          alignment=TA_CENTER,
-                          fontSize=20,
-                          spaceBottom=24,
-                          textColor=colors.HexColor('#3A0CA3'))) # Deep Purple Title
+styles.add(ParagraphStyle(name='ReportTitle', parent=styles['h1'], alignment=TA_CENTER, fontSize=20, spaceBottom=24, textColor=colors.HexColor('#3A0CA3')))
+styles.add(ParagraphStyle(name='SectionHeading', parent=styles['h2'], fontSize=14, spaceBefore=16, spaceAfter=8, textColor=colors.HexColor('#480CA8'), alignment=TA_LEFT))
+styles.add(ParagraphStyle(name='SubHeading', parent=styles['h3'], fontSize=11, spaceBefore=10, spaceAfter=5, textColor=colors.HexColor('#480CA8'), fontName='Helvetica-Bold', alignment=TA_LEFT))
+styles.add(ParagraphStyle(name='Body', parent=styles['Normal'], alignment=TA_LEFT, fontSize=10, leading=14, textColor=colors.darkslategray))
+styles.add(ParagraphStyle(name='ListItem', parent=styles['Body'], leftIndent=20, spaceBefore=2, spaceAfter=2))
+styles.add(ParagraphStyle(name='ScoreHighlight', parent=styles['Normal'], alignment=TA_RIGHT, fontSize=22, fontName='Helvetica-Bold', textColor=colors.HexColor('#3A0CA3')))
+styles.add(ParagraphStyle(name='ScoreLabel', parent=styles['Normal'], alignment=TA_LEFT, fontSize=12, fontName='Helvetica-Bold', textColor=colors.HexColor('#4361EE')))
+styles.add(ParagraphStyle(name='TableHeader', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, alignment=TA_LEFT, textColor=colors.white))
+styles.add(ParagraphStyle(name='TableCell', parent=styles['Normal'], fontSize=9, leading=11))
+styles.add(ParagraphStyle(name='WatermarkStyle', parent=styles['Normal'], alignment=TA_RIGHT, fontSize=8, textColor=colors.Color(0,0,0, alpha=0.15)))
 
-styles.add(ParagraphStyle(name='SectionHeading',
-                          parent=styles['h2'],
-                          fontSize=14,
-                          spaceBefore=16,
-                          spaceAfter=8,
-                          textColor=colors.HexColor('#480CA8'), # Royal Blue Heading
-                          alignment=TA_LEFT))
+# --- Helper Functions ---
 
-styles.add(ParagraphStyle(name='SubHeading',
-                          parent=styles['h3'],
-                          fontSize=11,
-                          spaceBefore=10,
-                          spaceAfter=5,
-                          textColor=colors.HexColor('#480CA8'), # Another Purple Shade
-                          fontName='Helvetica-Bold',
-                          alignment=TA_LEFT))
-
-styles.add(ParagraphStyle(name='Body',
-                          parent=styles['Normal'],
-                          alignment=TA_LEFT,
-                          fontSize=10,
-                          leading=14, # Line spacing
-                          textColor=colors.darkslategray))
-
-styles.add(ParagraphStyle(name='ListItem',
-                          parent=styles['Body'],
-                          leftIndent=20,
-                          spaceBefore=2,
-                          spaceAfter=2)) # For bullet points
-
-styles.add(ParagraphStyle(name='ScoreHighlight',
-                          parent=styles['Normal'],
-                          alignment=TA_RIGHT,
-                          fontSize=22, # Larger score
-                          fontName='Helvetica-Bold',
-                          textColor=colors.HexColor('#3A0CA3'))) # Match title color
-
-styles.add(ParagraphStyle(name='ScoreLabel',
-                          parent=styles['Normal'],
-                          alignment=TA_LEFT,
-                          fontSize=12,
-                          fontName='Helvetica-Bold',
-                          textColor=colors.HexColor('#4361EE'))) # Match heading color
-
-styles.add(ParagraphStyle(name='TableHeader',
-                           parent=styles['Normal'],
-                           fontName='Helvetica-Bold',
-                           fontSize=9,
-                           alignment=TA_LEFT,
-                           textColor=colors.white))
-
-styles.add(ParagraphStyle(name='TableCell',
-                           parent=styles['Normal'],
-                           fontSize=9,
-                           leading=11))
-
-styles.add(ParagraphStyle(name='WatermarkStyle', # Can be reused if needed elsewhere
-                          parent=styles['Normal'],
-                          alignment=TA_RIGHT,
-                          fontSize=8,
-                          textColor=colors.Color(0,0,0, alpha=0.15))) # Faint watermark
-
-# --- Watermark Function ---
-def add_watermark(canvas, doc):
-    """Adds 'hrumbles.ai' watermark to each page."""
-    canvas.saveState()
-    canvas.setFont('Helvetica', 8)
-    canvas.setFillColor(colors.Color(0,0,0, alpha=0.15)) # Faint color
-    # Position in top-right corner
-    canvas.drawRightString(doc.pagesize[0] - 0.5*inch, doc.pagesize[1] - 0.5*inch, "hrumbles.ai")
-    canvas.restoreState()
-
-
-# Function to log progress and store in Redis
 def log_progress(job_id: str, step: str, message: str, data: dict = None):
     """Log a progress step and store in Redis."""
-    log_entry = {
-        "step": step,
-        "message": message,
-        "data": data or {},
-        "timestamp": str(os.times()[4])  # System time
-    }
-    logger.info(f"Job {job_id} - {step}: {message}")
-    redis_conn.rpush(f"job_logs:{job_id}", json.dumps(log_entry))
+    try:
+        log_entry = {
+            "step": step,
+            "message": message,
+            "data": data or {},
+            "timestamp": datetime.datetime.utcnow().isoformat() # Use UTC timestamp
+        }
+        logger.info(f"Job {job_id} - {step}: {message}")
+        try:
+            redis_conn.rpush(f"job_logs:{job_id}", json.dumps(log_entry))
+        except Exception as redis_e:
+            logger.error(f"Job {job_id} - REDIS_ERROR: Failed to push log to Redis for step '{step}': {redis_e}")
+    except Exception as log_e:
+        print(f"[FALLBACK LOG] Job {job_id} - {step}: {message} - Error in log_progress itself: {log_e}")
 
-# Helper function to download resume from Supabase Storage
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def download_resume(resume_path: str) -> str:
+    """Downloads resume, raises FileNotFoundInStorageError if not found."""
     try:
-        response = supabase.storage.from_(SUPABASE_STORAGE_BUCKET).download(resume_path)
+        response_content = supabase.storage.from_(SUPABASE_STORAGE_BUCKET).download(resume_path)
         local_path = f"/tmp/{os.path.basename(resume_path)}"
-        with open(local_path, "wb") as f:
-            f.write(response)
+        with open(local_path, "wb") as f: f.write(response_content)
+        logger.info(f"Successfully downloaded resume to {local_path}")
         return local_path
     except Exception as e:
-        # Check if the error is likely a 'Not Found' error from Supabase Storage client
-        # Note: The exact error type/message might depend on the supabase-py version.
-        # Check for common indicators like 'NotFound', status code 400/404 in the message.
         error_message = str(e).lower()
-        if 'not found' in error_message or 'status_code=400' in error_message or 'statuscode=400' in error_message or 'empty path' in error_message or 'status_code=404' in error_message:
-             logger.error(f"Resume file not found in Supabase Storage at path: {resume_path}. Error: {e}")
-             # Raise specific custom exception
-             raise FileNotFoundInStorageError(f"Resume file not found in Supabase Storage: {resume_path}") from e
+        # Check for indicators of file not found (adjust if needed based on library version)
+        if 'not found' in error_message or 'empty path' in error_message or \
+           'status_code=400' in error_message or 'statuscode=400' in error_message or \
+           'status_code=404' in error_message or 'statuscode=404' in error_message:
+            logger.error(f"Resume file not found in Supabase Storage at path: {resume_path}. Error: {e}")
+            raise FileNotFoundInStorageError(f"Resume file not found in Supabase Storage: {resume_path}") from e
         else:
-             # For other errors (network, permissions, etc.), raise a general exception
-             logger.error(f"Failed to download resume from Supabase. Path: {resume_path}. Error: {e}")
-             raise Exception(f"Failed to download resume from Supabase: {str(e)}") from e
+            logger.error(f"Failed to download resume from Supabase. Path: {resume_path}. Error: {e}")
+            raise Exception(f"Failed to download resume from Supabase: {str(e)}") from e
 
-# --- END MODIFIED download_resume Function ---
-# Helper function to get the total number of pages in a PDF
 def get_pdf_page_count(pdf_path: str) -> int:
+    """Gets page count using pdfinfo_from_path."""
     try:
-        from pdf2image import pdfinfo_from_path
         pdf_info = pdfinfo_from_path(pdf_path)
-        return int(pdf_info["Pages"])
-    except PDFPageCountError as e:
-        raise Exception(f"Failed to determine PDF page count: {str(e)}")
+        count = int(pdf_info.get("Pages", 0)) # Use .get() for safety
+        if count <= 0:
+             raise ValueError("pdfinfo returned invalid page count")
+        return count
+    except (PDFPageCountError, ValueError, Exception) as e:
+        logger.error(f"Failed to determine PDF page count for {pdf_path}: {e}")
+        raise Exception(f"Failed to determine PDF page count: {str(e)}") from e
 
-# Helper function to extract text from a file (PDF, DOCX, or DOC)
+def convert_to_pdf(input_path: str, output_dir: str, job_id: str) -> str:
+    """Converts DOC/DOCX to PDF using LibreOffice soffice command."""
+    output_filename = os.path.splitext(os.path.basename(input_path))[0] + ".pdf"
+    output_path = os.path.join(output_dir, output_filename)
+    os.makedirs(output_dir, exist_ok=True)
+    command = ['soffice', '--headless', '--convert-to', 'pdf', '--outdir', output_dir, input_path]
+    try:
+        log_progress(job_id, "convert_to_pdf_start", f"Converting {input_path} to PDF")
+        result = subprocess.run(command, capture_output=True, text=True, timeout=120, check=True, encoding='utf-8', errors='replace')
+        log_progress(job_id, "convert_to_pdf_success", f"Conversion command executed. Output: {output_path}", {"stdout": result.stdout[:500], "stderr": result.stderr[:500]})
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+             raise FileNotFoundError(f"LibreOffice conversion ran but output PDF not found or empty at {output_path}. Stderr: {result.stderr}")
+        log_progress(job_id, "convert_to_pdf_complete", f"PDF conversion successful: {output_path}")
+        return output_path
+    except subprocess.CalledProcessError as e:
+        log_progress(job_id, "convert_to_pdf_error", f"LibreOffice conversion failed (exit code {e.returncode})", {"stderr": e.stderr[:1000], "stdout": e.stdout[:1000]})
+        raise Exception(f"LibreOffice conversion failed for {input_path}: {e.stderr}") from e
+    except subprocess.TimeoutExpired as e:
+        log_progress(job_id, "convert_to_pdf_error", f"LibreOffice conversion timed out for {input_path}")
+        raise Exception(f"LibreOffice conversion timed out for {input_path}") from e
+    except FileNotFoundError as e: # Catch specific file not found after conversion
+        log_progress(job_id, "convert_to_pdf_error", f"Output PDF file missing after conversion command: {str(e)}")
+        raise e # Re-raise the specific error
+    except Exception as e:
+        log_progress(job_id, "convert_to_pdf_error", f"Generic error during LibreOffice conversion for {input_path}: {str(e)}")
+        raise Exception(f"Error during LibreOffice conversion: {str(e)}") from e
+
 def extract_text_from_file(file_path: str, job_id: str) -> str:
+    """Extracts text using Strategy 1: Convert DOC/DOCX to PDF, then OCR."""
+    pdf_to_process = None
+    temp_pdf_path = None
+    text = ""
     try:
         file_extension = os.path.splitext(file_path)[1].lower()
-        text = ""
+        output_dir = "/tmp" # Directory for temporary PDFs
 
-        if file_extension == ".pdf":
-            total_pages = get_pdf_page_count(file_path)
-            log_progress(job_id, "extract_text", f"PDF has {total_pages} pages")
-            custom_config = r'--oem 3 --psm 6'  # OEM 3 (default), PSM 6 (assume a single uniform block of text)
-
-            for page_num in range(1, total_pages + 1):
-                log_progress(job_id, "extract_text", f"Converting page {page_num}/{total_pages} to image at 200 DPI")
-                images = convert_from_path(file_path, dpi=200, first_page=page_num, last_page=page_num)
-                if not images:
-                    log_progress(job_id, "extract_text", f"No image generated for page {page_num}")
-                    continue
-
-                page_text = pytesseract.image_to_string(images[0], config=custom_config)
-                text += f"\n--- Page {page_num} ---\n{page_text}"
-                log_progress(job_id, "extract_text", f"Extracted text from page {page_num}/{total_pages}", {
-                    "page_text_length": len(page_text),
-                    "page_text": page_text[:500]  # Log first 500 chars for debugging
-                })
-                del images
-
-        elif file_extension == ".docx":
-            log_progress(job_id, "extract_text", "Extracting text from DOCX")
-            doc = Document(file_path)
-            for para in doc.paragraphs:
-                if para.text.strip():
-                    text += para.text + "\n"
-            log_progress(job_id, "extract_text", "Text extracted from DOCX successfully")
-
-        elif file_extension == ".doc":
-            log_progress(job_id, "extract_text", "Extracting text from DOC using textract")
-            text = textract.process(file_path).decode('utf-8')
-            log_progress(job_id, "extract_text", "Text extracted from DOC successfully")
-
+        if file_extension in [".doc", ".docx"]:
+            log_progress(job_id, "extract_text_convert", f"Detected {file_extension}, attempting conversion to PDF.")
+            try:
+                temp_pdf_path = convert_to_pdf(file_path, output_dir, job_id)
+                pdf_to_process = temp_pdf_path
+                log_progress(job_id, "extract_text_convert_success", f"Converted to PDF: {pdf_to_process}")
+            except Exception as conversion_err:
+                log_progress(job_id, "extract_text_convert_failed", f"PDF conversion failed, attempting fallback extraction. Error: {conversion_err}")
+                # Fallback Logic
+                if file_extension == ".docx":
+                     try:
+                         doc = Document(file_path)
+                         fallback_text_list = [p.text for p in doc.paragraphs if p.text.strip()]
+                         text = "\n".join(fallback_text_list)
+                         log_progress(job_id, "extract_text_fallback_docx", f"Used python-docx fallback, extracted {len(text)} chars.")
+                         return text.strip() or "No text extracted (docx fallback)"
+                     except Exception as docx_err:
+                         log_progress(job_id, "extract_text_fallback_error", f"python-docx fallback failed: {docx_err}")
+                         # Raise original conversion error if fallback also fails
+                         raise Exception(f"Failed to convert DOCX to PDF and fallback also failed: {conversion_err}") from docx_err
+                elif file_extension == ".doc":
+                     try:
+                         # Ensure textract and antiword (if needed) are installed
+                         text = textract.process(file_path).decode('utf-8', errors='ignore')
+                         log_progress(job_id, "extract_text_fallback_doc", f"Used textract fallback, extracted {len(text)} chars.")
+                         return text.strip() or "No text extracted (doc fallback)"
+                     except Exception as textract_err:
+                          log_progress(job_id, "extract_text_fallback_error", f"textract fallback failed for .doc: {textract_err}")
+                          raise Exception(f"Failed to convert DOC to PDF and fallback extraction also failed: {conversion_err}") from textract_err
+        elif file_extension == ".pdf":
+            pdf_to_process = file_path # Use the original PDF
         else:
             raise Exception(f"Unsupported file format: {file_extension}")
 
-        log_progress(job_id, "extract_text", "Text extracted successfully", {
-            "text_length": len(text),
-            "full_text": text[:1000]  # Log first 1000 chars for debugging
-        })
+        # --- Process the PDF (Original or Converted) using OCR ---
+        if pdf_to_process:
+            log_progress(job_id, "extract_text_ocr_start", f"Processing PDF with OCR: {os.path.basename(pdf_to_process)}")
+            try:
+                total_pages = get_pdf_page_count(pdf_to_process)
+                log_progress(job_id, "extract_text_page_count", f"PDF has {total_pages} pages")
+                custom_config = r'--oem 3 --psm 6' # Adjust psm if needed
+
+                all_page_texts = []
+                for page_num in range(1, total_pages + 1):
+                    page_log_prefix = f"extract_text_page_{page_num}"
+                    log_progress(job_id, page_log_prefix, f"Processing page {page_num}/{total_pages}")
+                    try:
+                        images = convert_from_path(pdf_to_process, dpi=200, first_page=page_num, last_page=page_num, timeout=60)
+                        if not images:
+                            log_progress(job_id, f"{page_log_prefix}_warn", "No image generated")
+                            continue
+                        page_text = pytesseract.image_to_string(images[0], config=custom_config)
+                        all_page_texts.append(page_text)
+                        log_progress(job_id, f"{page_log_prefix}_success", f"Extracted text", {"length": len(page_text)})
+                        del images # Clean up memory
+                    except Exception as ocr_page_err:
+                         log_progress(job_id, f"{page_log_prefix}_error", f"Error during OCR: {ocr_page_err}")
+                         all_page_texts.append(f"\n--- Error processing page {page_num} ---") # Add error marker
+
+                text = "\n--- Page Break ---\n".join(all_page_texts) # Join pages with separator
+                log_progress(job_id, "extract_text_ocr_complete", "Finished OCR processing")
+
+            except Exception as pdf_processing_err:
+                 log_progress(job_id, "extract_text_ocr_error", f"Error processing PDF {pdf_to_process}: {pdf_processing_err}")
+                 raise Exception(f"Error processing PDF {pdf_to_process}: {str(pdf_processing_err)}") from pdf_processing_err
+        else:
+             # Should only happen if conversion failed AND fallback failed above
+             raise Exception("No processable PDF found after conversion attempts.")
+
+        log_progress(job_id, "extract_text_final", "Text extraction completed.", {"final_text_length": len(text)})
         return text.strip() or "No text extracted"
 
     except Exception as e:
-        raise Exception(f"Failed to extract text from file: {str(e)}")
+        tb_str = traceback.format_exc()
+        log_progress(job_id, "extract_text_fatal_error", f"Fatal error during text extraction: {str(e)}", {"traceback": tb_str})
+        raise Exception(f"Failed to extract text from file {file_path}: {str(e)}") from e
+    finally:
+         # Clean up temporary PDF if created
+         if temp_pdf_path and os.path.exists(temp_pdf_path):
+             try:
+                 os.remove(temp_pdf_path)
+                 log_progress(job_id, "extract_text_cleanup", f"Removed temporary PDF: {temp_pdf_path}")
+             except Exception as cleanup_err:
+                 log_progress(job_id, "extract_text_cleanup_error", f"Failed to remove temp PDF {temp_pdf_path}: {cleanup_err}")
 
-
-
-# --- Keep the SIMPLIFIED clean_gemini_output ---
 def clean_gemini_output(text: str) -> str:
+    """Cleans Gemini output, extracts JSON."""
     text = text.strip()
-    # Remove code fences (common issue)
-    if text.startswith('```json'):
-        text = text[7:].rstrip('```')
-    elif text.startswith('```'):
-        text = text[3:].rstrip('```')
+    if text.startswith('```json'): text = text[7:].rstrip('```')
+    elif text.startswith('```'): text = text[3:].rstrip('```')
     text = text.strip()
-
-    # Extract JSON object between the first { and the last }
-    start = text.find('{')
-    end = text.rfind('}')
-    if start != -1 and end != -1 and end > start:
-        text = text[start:end+1]
-    else:
-         log_progress("debug", "clean_gemini_output_warning", "No JSON object markers ({}) found in text", {"text_preview": text[:200]})
-         # Let json.loads handle potential errors if no markers found
-
-    # Remove common control characters (safer)
-    text = re.sub(r'[\x00-\x1F\x7F]', '', text)
-    # Remove trailing commas before } or ] (relatively safe)
-    text = re.sub(r',\s*([}\]])', r'\1', text)
+    start = text.find('{'); end = text.rfind('}')
+    if start != -1 and end != -1 and end > start: text = text[start:end+1]
+    else: logger.warning(f"clean_gemini_output: No JSON object markers found in preview: {text[:200]}")
+    text = re.sub(r'[\x00-\x1F\x7F]', '', text) # Remove control chars
+    text = re.sub(r',\s*([}\]])', r'\1', text) # Remove trailing commas
     return text
 
-# Helper function to generate the report using Gemini API
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def generate_report(resume_text: str, job_description: str, job_id: str) -> dict: # Added job_id parameter
-    # Use a unique identifier for this specific attempt for easier log tracing
+def generate_report(resume_text: str, job_description: str, job_id: str) -> dict:
+    """Generates analysis report using Gemini, includes detailed logging."""
     attempt_id = os.urandom(4).hex()
     current_step = "init"
     try:
-        current_step = "log_start"
-        # DETAILED LOG: Function entry
-        log_progress(job_id, f"generate_report_start_{attempt_id}", "Entering generate_report function")
+        current_step = "log_start"; log_progress(job_id, f"generate_report_start_{attempt_id}", "Entering generate_report")
+        current_step = "log_raw_inputs"; log_progress(job_id, f"generate_report_raw_inputs_{attempt_id}", "Raw input previews", {"resume_preview": resume_text[:200], "jd_preview": job_description[:200]})
+        current_step = "escape_inputs"; escaped_resume = resume_text.replace('{', '{{').replace('}', '}}'); escaped_job_desc = job_description.replace('{', '{{').replace('}', '}}'); log_progress(job_id, f"generate_report_escaped_{attempt_id}", "Inputs escaped")
+        current_step = "log_input_preview"; log_progress(job_id, f"generate_report_input_{attempt_id}", "Preparing prompt", {"resume_preview": escaped_resume[:1000], "jd_preview": escaped_job_desc[:1000]})
 
-        current_step = "log_raw_inputs"
-        # DETAILED LOG: Log raw inputs before escaping
-        log_progress(job_id, f"generate_report_raw_inputs_{attempt_id}", "Raw input previews", {
-            "resume_preview": resume_text[:200],
-            "jd_preview": job_description[:200]
-        })
-
-        # --- Your existing brace escaping ---
-        current_step = "escape_inputs"
-        escaped_resume = resume_text.replace('{', '{{').replace('}', '}}')
-        escaped_job_desc = job_description.replace('{', '{{').replace('}', '}}')
-        # DETAILED LOG: Log escaped inputs
-        log_progress(job_id, f"generate_report_escaped_{attempt_id}", "Inputs escaped for formatting", {
-            "resume_preview": escaped_resume[:200],
-            "jd_preview": escaped_job_desc[:200]
-        })
-
-        # --- Your existing input log (now with attempt_id) ---
-        current_step = "log_input_preview"
-        log_progress(job_id, f"generate_report_input_{attempt_id}", "Preparing prompt", { # Added attempt_id
-            "resume_text_preview": escaped_resume[:1000],
-            "job_description_preview": escaped_job_desc[:1000]
-        })
-
-        # --- Your existing prompt definition ---
         prompt_template = """
-Analyze this resume against the job description and return ONLY a valid JSON response with:
-- overall_match_score (percentage, 0-100)
-- matched_skills (array of objects with:
-    requirement (detailed, e.g., "Python for automation"),
-    matched ('yes', 'partial', 'no'),
-    details (specific evidence from resume or "Not mentioned" if absent))
-- summary (short plain text summary)
-- companies (array of objects with:
-    name (string, company name),
-    designation (string, role at company or "-" if not specified),
-    years (string, duration like "2019 - 2022" or "-" if not specified))
-- missing_or_weak_areas (array of strings listing gaps)
-- top_skills (array of candidate's strongest skills)
-- development_gaps (array of skills needing improvement)
-- additional_certifications (array of strings listing certifications not required by JD)
-- section_wise_scoring (array of objects with main sections, each containing:
-    {{
-      section (string),
-      weightage (percentage),
-      submenus (array of {{ submenu (string), weightage (percentage of section), score (out of 10), weighted_score (calculated), remarks (string) }})
-    }})
-- candidate_name (string, extracted from resume or "Unknown" if not found)
-- email (string, extracted from resume or "" if not found)
-- phone_number (string, extracted from resume or "" if not found)
-- github (string, extracted from resume or "" if not found)
-- linkedin (string, extracted from resume or "" if not found)
+# Analyze this resume against the job description and return ONLY a valid JSON response with:
+# - overall_match_score (percentage, 0-100)
+# - matched_skills (array of objects with:
+#     requirement (detailed, e.g., "Python for automation"),
+#     matched ('yes', 'partial', 'no'),
+#     details (specific evidence from resume or "Not mentioned" if absent))
+# - summary (short plain text summary)
+# - companies (array of objects with:
+#     name (string, company name),
+#     designation (string, role at company or "-" if not specified),
+#     years (string, duration like "2019 - 2022" or "-" if not specified))
+# - missing_or_weak_areas (array of strings listing gaps)
+# - top_skills (array of candidate's strongest skills)
+# - development_gaps (array of skills needing improvement)
+# - additional_certifications (array of strings listing certifications not required by JD)
+# - section_wise_scoring (array of objects with main sections, each containing:
+#     {{
+#       section (string),
+#       weightage (percentage),
+#       submenus (array of {{ submenu (string), weightage (percentage of section), score (out of 10), weighted_score (calculated), remarks (string) }})
+#     }})
+# - candidate_name (string, extracted from resume or "Unknown" if not found)
+# - email (string, extracted from resume or "" if not found)
+# - phone_number (string, extracted from resume or "" if not found)
+# - github (string, extracted from resume or "" if not found)
+# - linkedin (string, extracted from resume or "" if not found)
 
-Job Description: {job_description}
-Resume: {resume_text}
+# Job Description: {job_description}
+# Resume: {resume_text}
 
-Structure section_wise_scoring with main sections and submenus:
-- Technical Skills (weightage: 40%, submenus: Core Skills 60%, Tools 40%)
-- Work Experience (weightage: 30%, submenus: Relevant Experience 70%, Duration 30%)
-- Projects (weightage: 15%, submenus: Personal Projects 50%, Professional Projects 50%)
-- Education (weightage: 10%, submenus: Degree, Certifications; weightage depends on JD:
-  - If JD requires a specific certification: Degree 30%, Certifications 70%
-  - If JD does not require a certification: Degree 50%, Certifications 50%)
-- Achievements (weightage: 5%, submenus: Awards 50%, Recognitions 50%)
-- Soft Skills (weightage: 5%, submenus: Leadership 50%, Communication 50%)
+# Structure section_wise_scoring with main sections and submenus:
+# - Technical Skills (weightage: 40%, submenus: Core Skills 60%, Tools 40%)
+# - Work Experience (weightage: 30%, submenus: Relevant Experience 70%, Duration 30%)
+# - Projects (weightage: 15%, submenus: Personal Projects 50%, Professional Projects 50%)
+# - Education (weightage: 10%, submenus: Degree, Certifications; weightage depends on JD:
+#   - If JD requires a specific certification: Degree 30%, Certifications 70%
+#   - If JD does not require a certification: Degree 50%, Certifications 50%)
+# - Achievements (weightage: 5%, submenus: Awards 50%, Recognitions 50%)
+# - Soft Skills (weightage: 5%, submenus: Leadership 50%, Communication 50%)
 
-Scoring Guidelines:
-- 'yes' (8-10/10): Clear evidence of the skill matching the JD.
-- 'partial' (4-7/10): Implied or indirect evidence.
-- 'no' (0-3/10): No evidence.
-- Infer skills from context (e.g., "Python used in automation tasks" matches "Python for automation").
-- Calculate overall_match_score as the sum of each section's weighted contribution:
-  - section_score = sum(submenu.weightage * submenu.score) / 100
-  - overall_match_score = sum(section.weightage * section_score) / 100
+# Scoring Guidelines:
+# - 'yes' (8-10/10): Clear evidence of the skill matching the JD.
+# - 'partial' (4-7/10): Implied or indirect evidence.
+# - 'no' (0-3/10): No evidence.
+# - Infer skills from context (e.g., "Python used in automation tasks" matches "Python for automation").
+# - Calculate overall_match_score as the sum of each section's weighted contribution:
+#   - section_score = sum(submenu.weightage * submenu.score) / 100
+#   - overall_match_score = sum(section.weightage * section_score) / 100
 
-For companies:
-- Extract company names, designations, and years from work experience sections.
-- If designation is not explicitly mentioned, use "-".
-- If years are not specified, use "-".
-- Example: "Senior Developer at TCS, 2019 - 2022" becomes {{ "name": "TCS", "designation": "Senior Developer", "years": "2019 - 2022" }}
+# For companies:
+# - Extract company names, designations, and years from work experience sections.
+# - If designation is not explicitly mentioned, use "-".
+# - If years are not specified, use "-".
+# - Example: "Senior Developer at TCS, 2019 - 2022" becomes {{ "name": "TCS", "designation": "Senior Developer", "years": "2019 - 2022" }}
 
-Use symbols: ✅ for 'yes', ⚠️ for 'partial', ❌ for 'no'. IMPORTANT: Ensure the output is ONLY a single, valid JSON object. All string values within the JSON must be properly escaped according to JSON standards (e.g., use \\" for quotes inside strings, \\\\ for backslashes, etc.). Do NOT include any explanatory text before or after the JSON object.
-"""
-        current_step = "before_format"
-        # DETAILED LOG: Before formatting prompt
-        log_progress(job_id, f"generate_report_before_format_{attempt_id}", "About to format the prompt string")
+# Use symbols: ✅ for 'yes', ⚠️ for 'partial', ❌ for 'no'. IMPORTANT: Ensure the output is ONLY a single, valid JSON object. All string values within the JSON must be properly escaped according to JSON standards (e.g., use \\" for quotes inside strings, \\\\ for backslashes, etc.). Do NOT include any explanatory text before or after the JSON object.
 
-        # --- Your existing prompt formatting ---
+""" # Keep prompt concise here, assume details are known by model or adjust if needed
+        current_step = "before_format"; log_progress(job_id, f"generate_report_before_format_{attempt_id}", "Formatting prompt")
         prompt = prompt_template.format(job_description=escaped_job_desc, resume_text=escaped_resume)
+        current_step = "after_format"; log_progress(job_id, f"generate_report_after_format_{attempt_id}", "Prompt formatted", {"prompt_preview": prompt[:500]})
 
-        current_step = "after_format"
-        # DETAILED LOG: After formatting prompt
-        log_progress(job_id, f"generate_report_after_format_{attempt_id}", "Prompt string formatted", {"prompt_preview": prompt[:500]})
-
-        # --- Your existing Gemini call ---
-        current_step = "before_api_call"
-        # DETAILED LOG: Before calling Gemini API
-        log_progress(job_id, f"generate_report_before_api_call_{attempt_id}", "About to call gemini_model.generate_content()")
+        current_step = "before_api_call"; log_progress(job_id, f"generate_report_before_api_call_{attempt_id}", "Calling Gemini API")
         response = gemini_model.generate_content(prompt)
-        current_step = "after_api_call"
-        # DETAILED LOG: After calling Gemini API
-        log_progress(job_id, f"generate_report_after_api_call_{attempt_id}", "Returned from gemini_model.generate_content()")
+        current_step = "after_api_call"; log_progress(job_id, f"generate_report_after_api_call_{attempt_id}", "Returned from Gemini API")
 
-        raw_gemini_text = response.text # Get the raw text
+        raw_gemini_text = response.text
+        current_step = "log_raw_output"; log_progress(job_id, f"generate_report_raw_output_{attempt_id}", "Raw Gemini response", {"preview": raw_gemini_text[:2000]})
+        current_step = "clean_output"; gemini_output = clean_gemini_output(raw_gemini_text); log_progress(job_id, f"generate_report_cleaned_output_{attempt_id}", "Cleaned Gemini response", {"preview": gemini_output[:2000]})
 
-        # --- Your existing raw output log (now with attempt_id) ---
-        current_step = "log_raw_output"
-        log_progress(job_id, f"generate_report_raw_output_{attempt_id}", "Raw Gemini response received", { # Added attempt_id
-            "raw_output_preview": raw_gemini_text[:2000]
-        })
-
-        # --- Your existing cleaning call ---
-        current_step = "clean_output"
-        gemini_output = clean_gemini_output(raw_gemini_text)
-        # DETAILED LOG: After cleaning output
-        log_progress(job_id, f"generate_report_cleaned_output_{attempt_id}", "Cleaned Gemini response", { # Added attempt_id
-            "cleaned_output_preview": gemini_output[:2000]
-        })
-
-        # --- Your existing JSON parsing block ---
         current_step = "parse_json"
         try:
             report = json.loads(gemini_output)
         except json.JSONDecodeError as e:
-            # DETAILED LOG: JSON parsing failed
-            log_progress(job_id, f"generate_report_parse_error_{attempt_id}", f"Failed to parse JSON: {str(e)}", { # Added attempt_id
-                "parsing_error": str(e),
-                "cleaned_output_preview": gemini_output[:2000]
-            })
-            current_step = "parse_fallback"
-            # DETAILED LOG: Attempting fallback parsing
-            log_progress(job_id, f"generate_report_fallback_{attempt_id}", "Attempting fallback parsing with ast.literal_eval") # Added attempt_id
+            log_progress(job_id, f"generate_report_parse_error_{attempt_id}", f"Failed JSON parse: {e}", {"preview": gemini_output[:2000]})
+            current_step = "parse_fallback"; log_progress(job_id, f"generate_report_fallback_{attempt_id}", "Attempting fallback parse")
             try:
                 report = ast.literal_eval(gemini_output)
-                if not isinstance(report, dict):
-                    raise ValueError("Fallback parsing did not yield a dictionary")
-                # DETAILED LOG: Fallback parsing succeeded
-                log_progress(job_id, f"generate_report_fallback_success_{attempt_id}", "Fallback parsing successful") # Added attempt_id
+                if not isinstance(report, dict): raise ValueError("Fallback did not yield dict")
+                log_progress(job_id, f"generate_report_fallback_success_{attempt_id}", "Fallback parse successful")
             except (ValueError, SyntaxError) as fallback_e:
-                # DETAILED LOG: Fallback parsing failed
-                log_progress(job_id, f"generate_report_fallback_error_{attempt_id}", f"Fallback parsing failed: {str(fallback_e)}", { # Added attempt_id
-                    "fallback_error": str(fallback_e),
-                    "cleaned_output_preview": gemini_output[:2000]
-                })
-                raise Exception(f"Invalid JSON response from Gemini after cleaning and fallback: Original error: {str(e)}. Fallback error: {str(fallback_e)}") from e # Keep combined error
+                log_progress(job_id, f"generate_report_fallback_error_{attempt_id}", f"Fallback parse failed: {fallback_e}", {"preview": gemini_output[:2000]})
+                raise Exception(f"Invalid JSON from Gemini after fallback. Original: {e}. Fallback: {fallback_e}") from e
 
-        # --- Your existing parsed report log (now with attempt_id) ---
-        current_step = "log_parsed_report"
-        log_progress(job_id, f"generate_report_parsed_{attempt_id}", "Parsed report structure", { # Added attempt_id
-            "report_keys": list(report.keys())
-        })
+        current_step = "log_parsed_report"; log_progress(job_id, f"generate_report_parsed_{attempt_id}", "Parsed report structure", {"keys": list(report.keys())})
 
-        # --- Your existing validation ---
         current_step = "validate_report"
-        required_fields = [
-            "overall_match_score", "matched_skills", "summary", "companies",
-            "missing_or_weak_areas", "top_skills", "development_gaps",
-            "additional_certifications", "section_wise_scoring",
-            "candidate_name", "email","phone_number", "github", "linkedin"
-        ]
+        required_fields = ["overall_match_score", "matched_skills", "summary", "companies", "missing_or_weak_areas", "top_skills", "development_gaps", "additional_certifications", "section_wise_scoring", "candidate_name", "email", "phone_number", "github", "linkedin"]
         for field in required_fields:
-            if field not in report:
-                # DETAILED LOG: Validation failed
-                log_progress(job_id, f"generate_report_validation_error_{attempt_id}", f"Missing field in report: {field}", { # Added attempt_id
-                    "report_keys": list(report.keys())
-                })
-                raise Exception(f"Missing required field in Gemini response: {field}")
+            if field not in report: raise Exception(f"Missing required field in Gemini response: {field}") # Fail early
 
-        # --- Your existing company normalization ---
         current_step = "normalize_companies"
-        # Define normalization func locally or ensure it's imported/available
-        # Using a local definition here to be self-contained:
-        def normalize_company_name_local(name):
-            if not isinstance(name, str): # Handle potential non-string names
-                return "-"
-            lower_name = name.lower().strip()
-            # Add your specific rules here if needed
-            if lower_name in ["infosys", "infosys ltd"]:
-                return "Infosys"
-            if lower_name == "infosys infotech":
-                return "Infosys Infotech"
-            # General cleanup (optional, adjust as needed)
-            normalized = re.sub(r'\s*(ltd|limited|inc|corp|corporation|llc|co)\.?\s*$', '', lower_name, flags=re.IGNORECASE)
-            normalized = re.sub(r'[^\w\s-]', '', normalized) # Keep hyphens maybe?
-            normalized = ' '.join(normalized.split()) # Consolidate whitespace
-            return normalized.strip() if normalized else name.strip() # Return original if normalization results in empty
-
-        # Ensure report["companies"] exists and is a list before processing
+        # Company normalization logic (ensure normalize_company_name is defined)
         if "companies" in report and isinstance(report["companies"], list):
             processed_companies = []
             for company in report["companies"]:
-                 # Ensure company is a dict and has 'name' before processing
                 if isinstance(company, dict) and "name" in company:
-                    processed_companies.append({
-                        "name": company["name"], # Keep original name in report for display?
-                        "normalized_name_for_dedup": normalize_company_name_local(company["name"]), # Use a temp key for dedup logic
-                        "designation": company.get("designation", "-"),
-                        "years": company.get("years", "-")
-                    })
-                # else: log warning maybe? Skipping invalid company entry
-
-            # Deduplicate based on the temporary normalized name, keeping the latest entry
+                    processed_companies.append({"name": company["name"], "normalized_name_for_dedup": normalize_company_name(company["name"]), "designation": company.get("designation", "-"), "years": company.get("years", "-")})
             unique_companies_final = []
             seen_normalized_names = set()
             for company in reversed(processed_companies):
                 norm_name = company["normalized_name_for_dedup"]
                 if norm_name not in seen_normalized_names:
-                    # Remove the temporary key before adding to final list
-                    del company["normalized_name_for_dedup"]
-                    unique_companies_final.append(company)
-                    seen_normalized_names.add(norm_name)
+                    del company["normalized_name_for_dedup"]; unique_companies_final.append(company); seen_normalized_names.add(norm_name)
             report["companies"] = list(reversed(unique_companies_final))
-        else:
-             # Handle case where 'companies' is missing or not a list
-             report["companies"] = []
-             log_progress(job_id, f"generate_report_normalization_warning_{attempt_id}", "Key 'companies' missing or not a list in Gemini report", {
-                 "report_keys": list(report.keys())
-             })
+        else: report["companies"] = []; log_progress(job_id, f"generate_report_norm_warn_{attempt_id}", "Companies missing/not list")
 
-
-        # --- Your existing final parsed report log (now with attempt_id) ---
-        # This might log large amounts of data, consider limiting it
         current_step = "log_final_report"
-        try:
-            report_preview = json.dumps(report)[:2000] # Log preview
-        except Exception:
-            report_preview = "Error creating report preview"
-        log_progress(job_id, f"generate_report_final_parsed_{attempt_id}", "Final processed report preview", { # Added attempt_id
-            "report_preview": report_preview
-        })
+        try: report_preview = json.dumps(report)[:2000]
+        except Exception: report_preview = "Error creating preview"
+        log_progress(job_id, f"generate_report_final_parsed_{attempt_id}", "Final processed report preview", {"preview": report_preview})
 
-        current_step = "final_success"
-        # DETAILED LOG: Final success
-        log_progress(job_id, f"generate_report_success_{attempt_id}", "Report generated and parsed successfully")
+        current_step = "final_success"; log_progress(job_id, f"generate_report_success_{attempt_id}", "Report generated successfully")
         return report
 
-    # --- Updated Exception Block ---
     except Exception as e:
-        # Log the exception with traceback and the last known step
         tb_str = traceback.format_exc()
-        # Use logger directly for critical error logging to avoid log_progress issues
-        logger.error(f"Job {job_id} - generate_report_error_{attempt_id}: Exception caught in generate_report at step '{current_step}'")
-        logger.error(f"Job {job_id} - Error Type: {type(e).__name__}")
-        logger.error(f"Job {job_id} - Error Message: {str(e)}")
-        logger.error(f"Job {job_id} - Traceback:\n{tb_str}")
+        logger.error(f"Job {job_id} - generate_report_error_{attempt_id}: Exception at step '{current_step}': {e}\n{tb_str}")
+        log_progress(job_id, f"generate_report_error_{attempt_id}", f"Exception at step '{current_step}': {e}", {"type": type(e).__name__, "step": current_step, "traceback": tb_str})
+        raise Exception(f"Failed report generation at step '{current_step}': {e}") from e
 
-        # Also try to log via log_progress for Redis record
-        log_progress(job_id, f"generate_report_error_{attempt_id}", f"Exception caught at step '{current_step}': {str(e)}", {
-            "error_type": type(e).__name__,
-            "error_message": str(e),
-            "last_step": current_step,
-            "traceback": tb_str
-        })
-        # Re-raise the exception for the retry mechanism
-        raise Exception(f"Failed to generate report at step '{current_step}': {str(e)}") from e
-
-# --- UPDATED save_report_as_pdf using Platypus for Visual Appeal ---
-def save_report_as_pdf(report: dict, output_path: str, job_id: str): # Added job_id for logging
+def save_report_as_pdf(report: dict, output_path: str, job_id: str):
+    """Saves the analysis report as a styled PDF using Platypus."""
     try:
         log_progress(job_id, "pdf_generation_start", "Starting PDF generation with Platypus")
-        doc = SimpleDocTemplate(output_path, pagesize=letter,
-                                leftMargin=0.75*inch, rightMargin=0.75*inch,
-                                topMargin=1.0*inch, bottomMargin=0.75*inch)
-        story = []
-        bullet = '•' # Bullet character
+        doc = SimpleDocTemplate(output_path, pagesize=letter, leftMargin=0.75*inch, rightMargin=0.75*inch, topMargin=1.0*inch, bottomMargin=0.75*inch)
+        story = []; bullet = '•'
 
-        # --- Build Story (Content) ---
-
-        # 1. Report Title
+        # --- Build Story ---
         story.append(Paragraph("Resume Analysis Report", styles['ReportTitle']))
 
-        # 2. Candidate Details Table
-        story.append(Paragraph("Candidate Details", styles['SectionHeading']))
-        candidate_data = [
-            [Paragraph("<b>Name:</b>", styles['TableCell']), Paragraph(report.get('candidate_name', 'N/A'), styles['TableCell'])],
-            [Paragraph("<b>Email:</b>", styles['TableCell']), Paragraph(report.get('email', 'N/A'), styles['TableCell'])],
-            [Paragraph("<b>Phone:</b>", styles['TableCell']), Paragraph(report.get('phone_number', 'N/A'), styles['TableCell'])],
-            [Paragraph("<b>LinkedIn:</b>", styles['TableCell']), Paragraph(report.get('linkedin', 'N/A'), styles['TableCell'])],
-            [Paragraph("<b>GitHub:</b>", styles['TableCell']), Paragraph(report.get('github', 'N/A'), styles['TableCell'])],
-        ]
-        candidate_table = Table(candidate_data, colWidths=[1.2*inch, 5.8*inch])
-        candidate_table.setStyle(TableStyle([
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('LEFTPADDING', (0, 0), (-1, -1), 0),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-            ('TOPPADDING', (0, 0), (-1, -1), 0),
-        ]))
-        story.append(candidate_table)
-        story.append(Spacer(1, 0.25*inch))
+        # Candidate Details Section
+        candidate_section = [Paragraph("Candidate Details", styles['SectionHeading'])]
+        candidate_data = [ [Paragraph(f"<b>{k.replace('_',' ').title()}:</b>", styles['TableCell']), Paragraph(str(report.get(k, 'N/A')), styles['TableCell'])] for k in ['candidate_name', 'email', 'phone_number', 'linkedin', 'github'] ]
+        candidate_table = Table(candidate_data, colWidths=[1.2*inch, 5.8*inch], style=[ ('VALIGN', (0,0), (-1,-1), 'TOP'), ('LEFTPADDING', (0,0), (-1,-1), 0), ('BOTTOMPADDING', (0,0), (-1,-1), 4) ])
+        candidate_section.append(candidate_table); candidate_section.append(Spacer(1, 0.25*inch)); story.append(KeepTogether(candidate_section))
 
-        # 3. Overall Score (Highlighted Box)
-        score_data = [[
-            Paragraph("Overall Match Score", styles['ScoreLabel']),
-            Paragraph(f"{report.get('overall_match_score', 0)}%", styles['ScoreHighlight'])
-        ]]
-        score_table = Table(score_data, colWidths=[5*inch, 2*inch])
-        score_table.setStyle(TableStyle([
-             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-             ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F0F3FF')), # Light Blue/Lavender background
-             ('LEFTPADDING', (0, 0), (0, 0), 12),
-             ('RIGHTPADDING', (1, 0), (1, 0), 12),
-             ('TOPPADDING', (0, 0), (-1, -1), 10),
-             ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
-             # ('ROUNDEDCORNERS', (0, 0), (-1,-1), 6), # Requires reportlab >= 3.6, uncomment if available
-             ('LINEBELOW', (0,0), (-1,0), 1, colors.HexColor('#4361EE')), # Underline below score box
-        ]))
-        story.append(score_table)
-        story.append(Spacer(1, 0.25*inch))
+        # Score Section
+        score_section = []
+        score_data = [[ Paragraph("Overall Match Score", styles['ScoreLabel']), Paragraph(f"{report.get('overall_match_score', 0)}%", styles['ScoreHighlight']) ]]
+        score_table = Table(score_data, colWidths=[5*inch, 2*inch], style=[ ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F0F3FF')), ('LEFTPADDING', (0,0), (0,0), 12), ('RIGHTPADDING', (1,0), (1,0), 12), ('TOPPADDING', (0,0), (-1,-1), 10), ('BOTTOMPADDING', (0,0), (-1,-1), 10), ('LINEBELOW', (0,0), (-1,0), 1, colors.HexColor('#4361EE')) ])
+        score_section.append(score_table); score_section.append(Spacer(1, 0.25*inch)); story.append(KeepTogether(score_section))
 
-        # 4. Overall Summary
-        story.append(Paragraph("Overall Summary", styles['SectionHeading']))
-        story.append(Paragraph(report.get('summary', "N/A"), styles['Body']))
-        story.append(Spacer(1, 0.25*inch))
+        # Summary Section
+        summary_section = [ Paragraph("Overall Summary", styles['SectionHeading']), Paragraph(report.get('summary', "N/A"), styles['Body']), Spacer(1, 0.25*inch) ]
+        story.append(KeepTogether(summary_section))
 
-        # 5. Skills Analysis (Side-by-side Table)
-        story.append(Paragraph("Skills Overview", styles['SectionHeading']))
+        # Skills Overview Section
+        skills_section = [Paragraph("Skills Overview", styles['SectionHeading'])]
+        top_skills_list = report.get("top_skills", []); missed_skills_list = report.get("missing_or_weak_areas", [])
+        top_flowables = [Paragraph("<b>Top Skills</b>", styles['SubHeading'])] + ([Paragraph(f"{bullet} {s}", styles['ListItem']) for s in top_skills_list] if top_skills_list else [Paragraph("N/A", styles['Body'])])
+        missed_flowables = [Paragraph("<b>Missed / Weak Areas</b>", styles['SubHeading'])] + ([Paragraph(f"{bullet} {a}", styles['ListItem']) for a in missed_skills_list] if missed_skills_list else [Paragraph("N/A", styles['Body'])])
+        skills_data = [[top_flowables, missed_flowables]] # Removed KeepTogether from here as it caused issues
+        skills_table = Table(skills_data, colWidths=[3.5*inch, 3.5*inch], style=[ ('VALIGN', (0,0), (-1,-1), 'TOP'), ('BOX', (0,0), (-1,-1), 1, colors.HexColor('#D9E2FF')), ('LEFTPADDING', (0,0), (-1,-1), 12), ('RIGHTPADDING', (0,0), (-1,-1), 12), ('TOPPADDING', (0,0), (-1,-1), 8), ('BOTTOMPADDING', (0,0), (-1,-1), 8) ])
+        skills_section.append(skills_table); skills_section.append(Spacer(1, 0.25*inch)); story.append(KeepTogether(skills_section)) # Keep heading and table together
 
-        top_skills_list = report.get("top_skills", [])
-        missed_skills_list = report.get("missing_or_weak_areas", [])
-
-        # Create Paragraph lists for each cell
-        top_skills_flowables = [Paragraph("<b>Top Skills</b>", styles['SubHeading'])]
-        if top_skills_list:
-            for skill in top_skills_list:
-                top_skills_flowables.append(Paragraph(f"{bullet} {skill}", styles['ListItem']))
-        else:
-            top_skills_flowables.append(Paragraph("N/A", styles['Body']))
-
-        missed_skills_flowables = [Paragraph("<b>Missed / Weak Areas</b>", styles['SubHeading'])]
-        if missed_skills_list:
-            for area in missed_skills_list:
-                missed_skills_flowables.append(Paragraph(f"{bullet} {area}", styles['ListItem']))
-        else:
-             missed_skills_flowables.append(Paragraph("N/A", styles['Body']))
-
-        # Add KeepTogether to try and keep skill lists from breaking across pages awkwardly
-        skills_data = [[top_skills_flowables, missed_skills_flowables]]
-        
-        skills_table = Table(skills_data, colWidths=[3.5*inch, 3.5*inch])
-        skills_table.setStyle(TableStyle([
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#D9E2FF')), # Light blue border
-            # ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.lightgrey), # Optional inner line
-            ('LEFTPADDING', (0, 0), (-1, -1), 12),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 12),
-            ('TOPPADDING', (0, 0), (-1, -1), 8),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-        ]))
-        story.append(skills_table)
-        story.append(Spacer(1, 0.25*inch))
-
-
-        # 6. Matched Skills (Detailed Table)
-        story.append(Paragraph("Detailed Skill Match", styles['SectionHeading']))
+        # Matched Skills Section
+        matched_skills_section = [Paragraph("Detailed Skill Match", styles['SectionHeading'])]
         matched_skills_list = report.get("matched_skills", [])
         if matched_skills_list:
-            matched_skills_data = [[
-                Paragraph("Requirement", styles['TableHeader']),
-                Paragraph("Match", styles['TableHeader']),
-                Paragraph("Evidence / Details", styles['TableHeader'])
-            ]]
-            status_map = {"yes": "✅ Yes", "partial": "⚠️ Partial", "no": "❌ No"}
-            for skill in matched_skills_list:
-                status = status_map.get(skill.get("matched", "no"), "❓")
-                req = Paragraph(skill.get('requirement', 'N/A'), styles['TableCell'])
-                det = Paragraph(skill.get('details', 'N/A'), styles['TableCell'])
-                matched_skills_data.append([req, Paragraph(status, styles['TableCell']), det])
+            hdr = [Paragraph(h, styles['TableHeader']) for h in ["Requirement", "Match", "Evidence / Details"]]
+            matched_data = [hdr] + [ [Paragraph(s.get('requirement','N/A'), styles['TableCell']), Paragraph({"yes": "✅ Yes", "partial": "⚠️ Partial", "no": "❌ No"}.get(s.get('matched', 'no'), "❓"), styles['TableCell']), Paragraph(s.get('details','N/A'), styles['TableCell'])] for s in matched_skills_list ]
+            matched_table = Table(matched_data, colWidths=[2.5*inch, 0.8*inch, 3.7*inch], style=[ ('BACKGROUND',(0,0),(-1,0),colors.HexColor('#4361EE')), ('TEXTCOLOR',(0,0),(-1,0),colors.white), ('ALIGN',(0,0),(-1,-1),'LEFT'), ('VALIGN',(0,0),(-1,-1),'TOP'), ('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'), ('BOTTOMPADDING',(0,0),(-1,0),8), ('TOPPADDING',(0,0),(-1,0),6), ('GRID',(0,0),(-1,-1),0.5,colors.lightgrey), ('LEFTPADDING',(0,0),(-1,-1),6), ('RIGHTPADDING',(0,0),(-1,-1),6), ('TOPPADDING',(0,1),(-1,-1),4), ('BOTTOMPADDING',(0,1),(-1,-1),4) ])
+            matched_skills_section.append(matched_table)
+        else: matched_skills_section.append(Paragraph("N/A", styles['Body']))
+        matched_skills_section.append(Spacer(1, 0.25*inch)); story.append(KeepTogether(matched_skills_section))
 
-            matched_table = Table(matched_skills_data, colWidths=[2.5*inch, 0.8*inch, 3.7*inch])
-            matched_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4361EE')), # Header background
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                ('TOPPADDING', (0, 0), (-1, 0), 6),
-                # Alternating row colors
-                # ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F0F3FF')]),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
-                ('LEFTPADDING', (0, 0), (-1, -1), 6),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-                ('TOPPADDING', (0, 1), (-1, -1), 4), # Padding for data rows
-                ('BOTTOMPADDING', (0, 1), (-1, -1), 4),
-            ]))
-            story.append(matched_table)
-        else:
-            story.append(Paragraph("No detailed skill matching data available.", styles['Body']))
-        story.append(Spacer(1, 0.25*inch))
+        # Companies Section
+        company_section = [Paragraph("Companies Mentioned", styles['SectionHeading'])]
+        companies = report.get("companies", [])
+        if companies: company_section.extend([Paragraph(f"{bullet} {c.get('name','N/A')} ({c.get('designation','-')}, {c.get('years','-')})", styles['ListItem']) for c in companies])
+        else: company_section.append(Paragraph("N/A", styles['Body']))
+        company_section.append(Spacer(1, 0.25*inch)); story.append(KeepTogether(company_section))
 
+        # Development Gaps Section
+        gaps_section = [Paragraph("Development Gaps", styles['SectionHeading'])]
+        gaps = report.get("development_gaps", [])
+        if gaps: gaps_section.extend([Paragraph(f"{bullet} {g}", styles['ListItem']) for g in gaps])
+        else: gaps_section.append(Paragraph("N/A", styles['Body']))
+        gaps_section.append(Spacer(1, 0.25*inch)); story.append(KeepTogether(gaps_section))
 
-        # 7. Companies Mentioned
-        story.append(Paragraph("Companies Mentioned", styles['SectionHeading']))
-        companies_list = report.get("companies", [])
-        if companies_list:
-             company_items = []
-             for company in companies_list:
-                 name = company.get('name', 'N/A')
-                 des = company.get('designation', '-')
-                 yrs = company.get('years', '-')
-                 company_items.append(Paragraph(f"{bullet} {name} ({des}, {yrs})", styles['ListItem']))
-             story.extend(company_items) # Add list items to story
-        else:
-             story.append(Paragraph("N/A", styles['Body']))
-        story.append(Spacer(1, 0.25*inch))
+        # Certifications Section
+        certs_section = [Paragraph("Additional Certifications", styles['SectionHeading'])]
+        certs = report.get("additional_certifications", [])
+        if certs: certs_section.extend([Paragraph(f"{bullet} {c}", styles['ListItem']) for c in certs])
+        else: certs_section.append(Paragraph("N/A", styles['Body']))
+        certs_section.append(Spacer(1, 0.25*inch)); story.append(KeepTogether(certs_section))
 
-        # 8. Development Gaps
-        story.append(Paragraph("Development Gaps", styles['SectionHeading']))
-        gaps_list = report.get("development_gaps", [])
-        if gaps_list:
-            gap_items = []
-            for gap in gaps_list:
-                 gap_items.append(Paragraph(f"{bullet} {gap}", styles['ListItem']))
-            story.extend(gap_items)
-        else:
-            story.append(Paragraph("N/A", styles['Body']))
-        story.append(Spacer(1, 0.25*inch))
-
-        # 9. Additional Certifications
-        story.append(Paragraph("Additional Certifications", styles['SectionHeading']))
-        certs_list = report.get("additional_certifications", [])
-        if certs_list:
-            cert_items = []
-            for cert in certs_list:
-                 cert_items.append(Paragraph(f"{bullet} {cert}", styles['ListItem']))
-            story.extend(cert_items)
-        else:
-            story.append(Paragraph("N/A", styles['Body']))
-        story.append(Spacer(1, 0.25*inch))
-
-
-        # 10. Section-Wise Scoring (Improved Table Layout)
-        story.append(Paragraph("Section-Wise Scoring", styles['SectionHeading']))
+        # Section Scoring Section
+        scoring_section_content = [Paragraph("Section-Wise Scoring", styles['SectionHeading'])]
         scoring_list = report.get("section_wise_scoring", [])
         if scoring_list:
-            scoring_data = [[
-                Paragraph("Section", styles['TableHeader']),
-                Paragraph("Sub-Section", styles['TableHeader']),
-                Paragraph("Score", styles['TableHeader']),
-                Paragraph("Remarks", styles['TableHeader']),
-            ]]
+            hdr = [Paragraph(h, styles['TableHeader']) for h in ["Section", "Sub-Section", "Score", "Remarks"]]
+            scoring_data = [hdr]
             for section in scoring_list:
-                sec_name = section.get('section', 'N/A')
-                sec_weight = section.get('weightage', 0)
-                first_row_for_section = True
+                first_row = True
                 for submenu in section.get("submenus", []):
-                    sub_name = submenu.get('submenu', 'N/A')
-                    sub_score = submenu.get('score', 0)
-                    sub_rem = submenu.get('remarks', '')
-                    # Display main section only on the first row of its submenus
-                    section_display = Paragraph(f"<b>{sec_name}</b><br/>({sec_weight}%)", styles['TableCell']) if first_row_for_section else ""
-                    scoring_data.append([
-                         section_display,
-                         Paragraph(sub_name, styles['TableCell']),
-                         Paragraph(f"{sub_score}/10", styles['TableCell']),
-                         Paragraph(sub_rem, styles['TableCell'])
-                    ])
-                    first_row_for_section = False # Only show main section name once
+                    sec_disp = Paragraph(f"<b>{section.get('section','N/A')}</b> ({section.get('weightage',0)}%)", styles['TableCell']) if first_row else ""
+                    scoring_data.append([ sec_disp, Paragraph(submenu.get('submenu','N/A'), styles['TableCell']), Paragraph(f"{submenu.get('score',0)}/10", styles['TableCell']), Paragraph(submenu.get('remarks',''), styles['TableCell']) ])
+                    first_row = False
+            scoring_table = Table(scoring_data, colWidths=[1.5*inch, 1.7*inch, 0.8*inch, 3.0*inch], style=[ ('BACKGROUND',(0,0),(-1,0),colors.HexColor('#4361EE')), ('TEXTCOLOR',(0,0),(-1,0),colors.white), ('ALIGN',(0,0),(-1,-1),'LEFT'), ('VALIGN',(0,0),(-1,-1),'TOP'), ('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'), ('BOTTOMPADDING',(0,0),(-1,0),8), ('TOPPADDING',(0,0),(-1,0),6), ('GRID',(0,0),(-1,-1),0.5,colors.lightgrey), ('LEFTPADDING',(0,0),(-1,-1),6), ('RIGHTPADDING',(0,0),(-1,-1),6), ('TOPPADDING',(0,1),(-1,-1),4), ('BOTTOMPADDING',(0,1),(-1,-1),4) ])
+            scoring_section_content.append(scoring_table)
+        else: scoring_section_content.append(Paragraph("N/A", styles['Body']))
+        scoring_section_content.append(Spacer(1, 0.25*inch)); story.append(KeepTogether(scoring_section_content))
 
-            scoring_table = Table(scoring_data, colWidths=[1.5*inch, 1.7*inch, 0.8*inch, 3.0*inch])
-            scoring_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4361EE')), # Header background
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                ('TOPPADDING', (0, 0), (-1, 0), 6),
-                # ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F0F3FF')]),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
-                ('LEFTPADDING', (0, 0), (-1, -1), 6),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-                ('TOPPADDING', (0, 1), (-1, -1), 4), # Padding for data rows
-                ('BOTTOMPADDING', (0, 1), (-1, -1), 4),
-                # Span the Section cell across rows if needed (more complex)
-            ]))
-            story.append(scoring_table)
-        else:
-            story.append(Paragraph("N/A", styles['Body']))
-        story.append(Spacer(1, 0.25*inch))
-
-
-        # --- Build the PDF ---
-        log_progress(job_id, "pdf_generation_build", "Building PDF document with Platypus")
+        # --- Build PDF ---
+        log_progress(job_id, "pdf_generation_build", "Building PDF document")
         doc.build(story, onFirstPage=add_watermark, onLaterPages=add_watermark)
         log_progress(job_id, "pdf_generation_success", "PDF generated successfully")
 
     except Exception as e:
         tb_str = traceback.format_exc()
-        logger.error(f"Job {job_id} - Failed to save report as PDF: {str(e)}")
-        logger.error(f"Job {job_id} - Traceback:\n{tb_str}")
-        log_progress(job_id, "pdf_generation_error", f"Failed to save report as PDF: {str(e)}", {
-            "error_type": type(e).__name__,
-            "error_message": str(e),
-            "traceback": tb_str
-        })
-        raise Exception(f"Failed to save report as PDF: {str(e)}") from e
+        logger.error(f"Job {job_id} - Failed PDF generation: {e}\n{tb_str}")
+        log_progress(job_id, "pdf_generation_error", f"Failed PDF generation: {e}", {"type": type(e).__name__, "traceback": tb_str})
+        raise Exception(f"Failed to save report as PDF: {e}") from e
 
-# END OF NEW save_report_as_pdf FUNCTION
-# Helper function to upload report to Supabase Storage
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def upload_report(report_path: str, destination_path: str, job_id: str):
+    """Uploads the generated report PDF to Supabase Storage."""
     try:
-        # --- NEW LOGGING ---
-        file_exists = os.path.exists(report_path)
-        file_size = os.path.getsize(report_path) if file_exists else -1
-        log_progress(job_id, "upload_report_info", "Preparing to upload report", {
-            "local_report_path": report_path,
-            "destination_path": destination_path,
-            "local_file_exists": file_exists,
-            "local_file_size_bytes": file_size
-        })
-        if not file_exists or file_size <= 0:
-             log_progress(job_id, "upload_report_error", "Local report file missing or empty", {"path": report_path, "size": file_size})
-             raise Exception(f"Local report file missing or empty: {report_path}")
-        # --- END NEW LOGGING ---
+        file_exists = os.path.exists(report_path); file_size = os.path.getsize(report_path) if file_exists else -1
+        log_progress(job_id, "upload_report_info", "Preparing report upload", {"local": report_path, "dest": destination_path, "exists": file_exists, "size": file_size})
+        if not file_exists or file_size <= 0: raise Exception(f"Local report file missing or empty: {report_path}")
         with open(report_path, "rb") as f:
             response = supabase.storage.from_(SUPABASE_STORAGE_BUCKET).upload(
-                path=destination_path,
-                file=f,
-                # --- Ensure file_options are included ---
-                file_options={
-                    "upsert": "true", # Allow overwriting
-                    "content-type": "application/pdf" # Set correct MIME type
-                }
-                # ---
+                path=destination_path, file=f, file_options={"upsert": "true", "content-type": "application/pdf"}
             )
-            log_progress(job_id, "upload_report_success", "Upload API call successful", {"destination": destination_path})
-            if hasattr(response, 'status_code') and response.status_code != 200:
-                raise Exception(f"Upload failed with status {response.status_code}: {response.json()}")
-        return response     
+        log_progress(job_id, "upload_report_success", "Upload API call finished", {"destination": destination_path})
+        # Consider adding check for specific success indicators if library doesn't raise error
+        return {"message": "Upload successful"} # Consistent return
     except Exception as e:
-        tb_str = traceback.format_exc()
-        log_progress(job_id, "upload_report_exception", f"Failed to upload report to Supabase: {str(e)}", {
-             "local_report_path": report_path,
-             "destination_path": destination_path,
-             "error_type": type(e).__name__,
-             "error_message": str(e),
-             "traceback": tb_str
-        })
-        raise Exception(f"Failed to upload report to Supabase ({type(e).__name__}): {str(e)}") from e
+        tb_str = traceback.format_exc(); error_type = type(e).__name__
+        log_progress(job_id, "upload_report_exception", f"Upload failed ({error_type}): {e}", {"local": report_path, "dest": destination_path, "type": error_type, "traceback": tb_str})
+        raise Exception(f"Failed upload ({error_type}): {e}") from e
 
-# Helper function to normalize company names
 def normalize_company_name(name: str) -> str:
-    """Normalize company name by converting to lowercase and removing common suffixes."""
-    if not name:
-        return ""
-    # Convert to lowercase and strip whitespace
+    """Normalizes company name."""
+    if not name: return ""
     normalized = name.lower().strip()
-    # Remove common suffixes (ltd, limited, inc, etc.)
     normalized = re.sub(r'\s*(ltd|limited|inc|corp|corporation|llc|co)\.?\s*$', '', normalized, flags=re.IGNORECASE)
-    # Remove punctuation
-    normalized = re.sub(r'[^\w\s]', '', normalized)
-    return normalized
-# Background task to process the analysis
-# PASTE THIS ENTIRE FUNCTION INTO tasks.py, REPLACING YOUR CURRENT process_analysis
+    normalized = re.sub(r'[^\w\s-]', '', normalized) # Keep hyphens
+    return ' '.join(normalized.split())
 
-# PASTE THIS ENTIRE FUNCTION INTO tasks.py, REPLACING THE OLD process_analysis
-# PASTE THIS ENTIRE FUNCTION INTO tasks.py, REPLACING THE OLD process_analysis
-
-# PASTE THIS ENTIRE FUNCTION INTO tasks.py, REPLACING THE OLD process_analysis
-
-# Background task to process the analysis
+# --- Main Background Task ---
 def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_description_from_request: str):
-    logger.info("Starting process_analysis for job_id: %s, candidate_id: %s", job_id, candidate_id)
+    """Main background task to process resume analysis."""
+    logger.info(f"Starting process_analysis for job_id: {job_id}, candidate_id: {candidate_id}")
     local_resume_path = None
     local_report_path = None
 
     try:
         # --- Entire process is now within one main try block ---
-
-        # Log task initiation
-        log_progress(job_id, "init", "Task started", {
-            "candidate_id": candidate_id, "resume_path": resume_path
-        })
+        log_progress(job_id, "init", "Task started", {"candidate_id": candidate_id, "resume_path": resume_path})
 
         # Step 1: Download Resume (Checks for existence via FileNotFoundinStorageError)
         log_progress(job_id, "download_resume", f"Attempting download: {resume_path}")
         try:
-            local_resume_path = download_resume(resume_path) # Use the modified download_resume
-            log_progress(job_id, "download_resume_success", "Resume downloaded", {
-                "local_path": local_resume_path,
-                "size": os.path.getsize(local_resume_path) if local_resume_path and os.path.exists(local_resume_path) else -1
-            })
+            local_resume_path = download_resume(resume_path)
+            log_progress(job_id, "download_resume_success", "Resume downloaded", {"local": local_resume_path, "size": os.path.getsize(local_resume_path) if local_resume_path and os.path.exists(local_resume_path) else -1})
         except FileNotFoundInStorageError as resume_not_found_err:
-            # Log clearly that the process is stopping due to missing file
-            log_progress(job_id, "error_resume_not_found", f"STOPPING TASK - Resume not found: {resume_path}. No DB changes will be made for this attempt.")
+            log_progress(job_id, "error_resume_not_found", f"STOPPING TASK - Resume not found: {resume_path}. No DB changes.")
             logger.error(f"Job {job_id} - STOPPING TASK - Resume not found: {resume_path} - {resume_not_found_err}")
-            # Return failure status immediately, NO DB updates.
             return {"status": "failed", "candidate_id": candidate_id, "error": str(resume_not_found_err)}
-        # Let other download errors (network, permission) be caught by the main except block below
 
         # Step 2: Validate job_id exists and fetch description
         log_progress(job_id, "fetch_jd", f"Fetching description for job_id {job_id}")
         job_response = supabase.table("hr_jobs").select("description").eq("id", job_id).execute()
-        if not job_response.data or not job_response.data[0].get("description"):
-            raise Exception(f"Job description not found for job {job_id}") # Caught below
-        job_description_from_db = job_response.data[0]["description"]
-        log_progress(job_id, "fetch_jd_success", "Fetched job description")
+        if not job_response.data or not job_response.data[0].get("description"): raise Exception(f"Job description not found for job {job_id}")
+        job_description_from_db = job_response.data[0]["description"]; log_progress(job_id, "fetch_jd_success", "Fetched job description")
 
         # Step 3: Extract text
         log_progress(job_id, "extract_text", "Extracting text from resume")
@@ -870,13 +1569,12 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
         if not candidate_check_resp.data:
              log_progress(job_id, "create_candidate", f"Candidate {candidate_id} not found, creating...")
              insert_data = { "id": candidate_id, "name": report.get("candidate_name", "Unknown"), "email": report.get("email") or f"unknown_{candidate_id}@example.com", "phone_number": report.get("phone_number"), "linkedin_url": report.get("linkedin"), "github_url": report.get("github") }
-             supabase.table("hr_candidates").insert(insert_data).execute() # Let exception propagate if fails
+             supabase.table("hr_candidates").insert(insert_data).execute()
              log_progress(job_id, "create_candidate_success", f"Created new candidate record")
 
         # Step 6: Save report as PDF
         log_progress(job_id, "save_report", "Saving report as PDF")
-        report_filename = f"report_{job_id}_{candidate_id}.pdf"
-        local_report_path = f"/tmp/{report_filename}"
+        report_filename = f"report_{job_id}_{candidate_id}.pdf"; local_report_path = f"/tmp/{report_filename}"
         save_report_as_pdf(report, local_report_path, job_id)
         log_progress(job_id, "save_report_success", "Report saved successfully")
 
@@ -886,94 +1584,54 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
         upload_report(local_report_path, report_destination_path, job_id)
         log_progress(job_id, "upload_report_success", "Report uploaded successfully")
 
-                # --- REVISED Step 4: Save and check company associations ---
+        # Step 8: Process company associations (fail task if this step errors)
         log_progress(job_id, "process_companies", "Processing company associations")
-        company_entries = [] # To store data for candidate_companies table
-        raw_companies = report.get("companies", []) # Get companies list from Gemini report
-
+        company_entries = []
+        raw_companies = report.get("companies", [])
         if isinstance(raw_companies, list):
             for company in raw_companies:
-                # Ensure entry is a dictionary and has a non-empty 'name'
                 if isinstance(company, dict) and company.get("name"):
-                    company_name = company["name"]
-                    # Normalize the name for consistency if needed elsewhere, but use original 'name' for upsert/lookup
-                    normalized_name = normalize_company_name(company_name)
-
-                    try:
-                        # Prepare company data for upsert into 'companies' table
-                        company_data_to_upsert = {
-                            "name": company_name, # This column has the UNIQUE constraint
-                            "normalized_name": normalized_name # Include/update normalized name
-                            # Add other company columns here if they exist in your 'companies' table
-                        }
-
-                        # Perform an upsert based on the 'name' constraint
-                        log_progress(job_id, "process_companies_upsert", f"Upserting company based on name: {company_name}")
-                        upsert_response = supabase.table("companies").upsert(
-                            company_data_to_upsert,
-                            on_conflict="name" # Target the actual unique constraint column
-                        ).execute()
-                        # Let potential APIErrors from upsert propagate to the main except block
-
-                        # After upsert, fetch the ID using the unique 'name' column
-                        # This ensures we have the correct ID whether inserted or updated
-                        log_progress(job_id, "process_companies_fetch_id", f"Fetching ID for company: {company_name}")
-                        fetch_response = supabase.table("companies").select("id").eq("name", company_name).limit(1).maybe_single().execute()
-
-                        if fetch_response.data:
-                            company_id = fetch_response.data["id"]
-                            log_progress(job_id, "process_companies_get_id_success", f"Got company ID {company_id} for '{company_name}'")
-                            # Prepare the entry for the candidate_companies association table
-                            company_entries.append({
-                                "candidate_id": candidate_id,
-                                "job_id": job_id, # Make sure job_id is part of the PK/constraint here too
-                                "company_id": company_id,
-                                "designation": company.get("designation", "-"),
-                                "years": company.get("years", "-")
-                            })
-                        else:
-                            # If fetching ID failed after a successful-looking upsert, something is wrong
-                            log_progress(job_id, "process_companies_get_id_error", f"Could not retrieve company ID after upsert for '{company_name}'")
-                            # Raise an error as we cannot proceed without the company ID
-                            raise Exception(f"Could not retrieve company ID after upsert for: {company_name}")
-
-                    except Exception as company_processing_exc:
-                         # Catch errors during upsert or fetch and fail the task
-                         log_progress(job_id, "process_companies_upsert_fetch_error", f"Error upserting/fetching company '{company_name}': {str(company_processing_exc)}")
-                         raise # Re-raise to fail the whole task
-
-            # After looping through all companies, upsert the associations
-            if company_entries:
-                log_progress(job_id, "save_candidate_companies_start", "Upserting candidate_companies associations", {"count": len(company_entries)})
+                    company_name = company["name"]; normalized_name = normalize_company_name(company_name)
+                    if not normalized_name: continue
+                    try: # Wrap company lookup/insert - Make errors fatal
+                        company_id = None
+                        # Use upsert based on name constraint
+                        company_data = {"name": company_name, "normalized_name": normalized_name}
+                        supabase.table("companies").upsert(company_data, on_conflict="name").execute()
+                        # Fetch ID after upsert
+                        fetch_resp = supabase.table("companies").select("id").eq("name", company_name).limit(1).maybe_single().execute()
+                        if fetch_resp.data: company_id = fetch_resp.data["id"]
+                        else: raise Exception(f"Could not retrieve company ID after upsert for: {company_name}")
+                        # Append association entry
+                        company_entries.append({"candidate_id": candidate_id, "job_id": job_id, "company_id": company_id, "designation": company.get("designation", "-"), "years": company.get("years", "-")})
+                    except Exception as company_proc_exc:
+                         log_progress(job_id, "process_companies_error", f"Error processing company '{company_name}': {company_proc_exc}")
+                         raise # Fail task
+            if company_entries: # Upsert associations
+                log_progress(job_id, "save_candidate_companies_start", "Upserting associations", {"count": len(company_entries)})
                 try:
-                    # Ensure the on_conflict columns match your actual unique constraint in candidate_companies
-                    assoc_response = supabase.table("candidate_companies").upsert(
-                        company_entries,
-                        on_conflict="candidate_id,job_id,company_id" # Adjust if constraint is different
-                    ).execute()
-                    log_progress(job_id, "save_candidate_companies_success", "Upserted candidate_companies successfully")
-                except Exception as company_assoc_upsert_exc:
-                    log_progress(job_id, "save_candidate_companies_error", f"Exception during candidate_companies upsert: {str(company_assoc_upsert_exc)}")
-                    raise # Fail the whole task if association upsert fails
-            else:
-                 log_progress(job_id, "save_candidate_companies_skip", "No valid company associations to save")
-        else:
-             log_progress(job_id, "process_companies_warning", "Report 'companies' field is not a list or missing")
+                    supabase.table("candidate_companies").upsert(company_entries, on_conflict="candidate_id,job_id,company_id").execute()
+                    log_progress(job_id, "save_candidate_companies_success", "Upserted associations")
+                except Exception as assoc_upsert_exc:
+                    log_progress(job_id, "save_candidate_companies_error", f"Upsert associations failed: {assoc_upsert_exc}")
+                    raise # Fail task
+            else: log_progress(job_id, "save_candidate_companies_skip", "No associations to save")
+        else: log_progress(job_id, "process_companies_warning", "Report 'companies' is not a list")
         log_progress(job_id, "process_companies_finished", "Finished processing companies")
-        # --- END REVISED Step 4 ---
-        # --- FINAL STEP: Prepare and Upsert analysis data (ONLY IF ALL ABOVE SUCCEEDED) ---
-        log_progress(job_id, "prepare_final_payload", "Preparing final payload for candidate_resume_analysis")
-        supabase_project_id = os.getenv("SUPABASE_PROJECT_ID", "[YOUR_PROJECT_ID]") # Provide default
+
+        # --- FINAL STEP: Prepare and Upsert analysis data ---
+        log_progress(job_id, "prepare_final_payload", "Preparing final analysis payload")
+        supabase_project_id = os.getenv("SUPABASE_PROJECT_ID", "[YOUR_PROJECT_ID]")
         if supabase_project_id == "[YOUR_PROJECT_ID]":
              try: supabase_project_id = SUPABASE_URL.split('.')[0].split('//')[1]
-             except Exception: log_progress(job_id, "warning", "Could not determine SUPABASE_PROJECT_ID for report URL")
+             except Exception: log_progress(job_id, "warning", "Could not get SUPABASE_PROJECT_ID for report URL")
         report_public_url = f"https://{supabase_project_id}.supabase.co/storage/v1/object/public/{SUPABASE_STORAGE_BUCKET}/{report_destination_path}"
-        resume_payload = {
+        resume_payload = { # Define payload
             "job_id": job_id, 
             "candidate_id": candidate_id, 
             "resume_text": resume_text or None,
             "overall_score": round(report.get("overall_match_score", 0)),
-            "matched_skills": report.get("matched_skills", []), 
+            "matched_skills": report.get("matched_skills", []),
             "summary": report.get("summary"),
             "missing_or_weak_areas": report.get("missing_or_weak_areas", []),
             "top_skills": report.get("top_skills", []), 
@@ -986,7 +1644,7 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
             "github": report.get("github", ""),
             "linkedin": report.get("linkedin", ""), 
             "report_url": report_public_url,
-            "has_validated_resume": True, # Set final status to True here
+            "has_validated_resume": True, # Final success status
             "updated_at": datetime.datetime.utcnow().isoformat()
         }
         log_progress(job_id, "save_final_analysis", "Upserting final candidate_resume_analysis data")
@@ -1002,20 +1660,17 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
 
     except Exception as e:
         # --- Main Exception Handler ---
-        # This block runs if ANY error occurred AFTER the initial resume download check
-        # OR if the initial download check raised something OTHER than FileNotFoundInStorageError
         tb_str = traceback.format_exc()
         error_message = f"Task failed during processing: {str(e)}"
         logger.error(f"Job {job_id} - process_analysis_error: {error_message} for candidate {candidate_id}")
         logger.error(f"Job {job_id} - Traceback:\n{tb_str}")
         # Log the error, but DO NOT update the database here.
         log_progress(job_id, "error_processing", error_message, {"error_type": type(e).__name__, "traceback": tb_str})
-
         # Return failure status for RQ result - NO database changes are made in this block
         return {"status": "failed", "candidate_id": candidate_id, "error": str(e)}
 
     finally:
-        # Cleanup logic remains the same - always runs
+        # Cleanup logic
         try:
             log_progress(job_id, "cleanup", "Cleaning up temporary files")
             if local_resume_path and os.path.exists(local_resume_path): os.remove(local_resume_path)
@@ -1024,4 +1679,4 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
         except Exception as cleanup_e:
             log_progress(job_id, "cleanup_error", f"Failed to clean up temporary files: {str(cleanup_e)}")
 
-# END OF UPDATED process_analysis FUNCTION
+# --- END OF tasks.py FILE ---

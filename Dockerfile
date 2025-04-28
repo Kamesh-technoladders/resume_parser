@@ -3,9 +3,12 @@ FROM python:3.9-slim
 # Install system dependencies for pdf2image, pytesseract, and redis-cli with retries
 RUN apt-get update --fix-missing || (sleep 5 && apt-get update --fix-missing) && \
     apt-get install -y --no-install-recommends \
-    poppler-utils \
-    tesseract-ocr \
-    redis-tools \
+        poppler-utils \
+        tesseract-ocr \
+        redis-tools \
+        libreoffice-writer \  
+        libreoffice-headless \ 
+        fonts-freefont-ttf \ 
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

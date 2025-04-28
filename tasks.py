@@ -886,39 +886,81 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
         upload_report(local_report_path, report_destination_path, job_id)
         log_progress(job_id, "upload_report_success", "Report uploaded successfully")
 
-        # Step 8: Process company associations (fail task if this step errors)
+                # --- REVISED Step 4: Save and check company associations ---
         log_progress(job_id, "process_companies", "Processing company associations")
-        company_entries = []
-        raw_companies = report.get("companies", [])
+        company_entries = [] # To store data for candidate_companies table
+        raw_companies = report.get("companies", []) # Get companies list from Gemini report
+
         if isinstance(raw_companies, list):
             for company in raw_companies:
+                # Ensure entry is a dictionary and has a non-empty 'name'
                 if isinstance(company, dict) and company.get("name"):
-                    company_name = company["name"]; normalized_name = normalize_company_name(company_name)
-                    if not normalized_name: continue
-                    try: # Wrap company lookup/insert - Make errors fatal
-                        company_id = None
-                        company_check_response = supabase.table("companies").select("id", count='exact').eq("normalized_name", normalized_name).execute()
-                        if company_check_response.count > 0: company_id = company_check_response.data[0]["id"]
-                        else:
-                            new_company_response = supabase.table("companies").insert({"name": company_name, "normalized_name": normalized_name}).execute()
-                            if new_company_response.data: company_id = new_company_response.data[0]["id"]
-                            else: raise Exception(f"Failed to insert company: {company_name}") # Fail task
-                        if company_id: company_entries.append({"candidate_id": candidate_id, "job_id": job_id, "company_id": company_id, "designation": company.get("designation", "-"), "years": company.get("years", "-")})
-                    except Exception as company_lookup_exc:
-                         log_progress(job_id, "process_companies_lookup_error", f"Error processing company '{company_name}': {str(company_lookup_exc)}")
-                         raise # Fail task on lookup/insert error
-            if company_entries:
-                log_progress(job_id, "save_candidate_companies_start", "Upserting candidate_companies", {"count": len(company_entries)})
-                try: # Wrap company upsert - Make errors fatal
-                    supabase.table("candidate_companies").upsert(company_entries, on_conflict="candidate_id,job_id,company_id").execute()
-                    log_progress(job_id, "save_candidate_companies_success", "Upserted candidate_companies successfully")
-                except Exception as company_upsert_exc:
-                    log_progress(job_id, "save_candidate_companies_error", f"Exception during upsert: {str(company_upsert_exc)}")
-                    raise # Fail task
-            else: log_progress(job_id, "save_candidate_companies_skip", "No valid company entries to upsert")
-        else: log_progress(job_id, "process_companies_warning", "Report 'companies' field is not a list")
-        log_progress(job_id, "process_companies_finished", "Finished processing companies")
+                    company_name = company["name"]
+                    # Normalize the name for consistency if needed elsewhere, but use original 'name' for upsert/lookup
+                    normalized_name = normalize_company_name(company_name)
 
+                    try:
+                        # Prepare company data for upsert into 'companies' table
+                        company_data_to_upsert = {
+                            "name": company_name, # This column has the UNIQUE constraint
+                            "normalized_name": normalized_name # Include/update normalized name
+                            # Add other company columns here if they exist in your 'companies' table
+                        }
+
+                        # Perform an upsert based on the 'name' constraint
+                        log_progress(job_id, "process_companies_upsert", f"Upserting company based on name: {company_name}")
+                        upsert_response = supabase.table("companies").upsert(
+                            company_data_to_upsert,
+                            on_conflict="name" # Target the actual unique constraint column
+                        ).execute()
+                        # Let potential APIErrors from upsert propagate to the main except block
+
+                        # After upsert, fetch the ID using the unique 'name' column
+                        # This ensures we have the correct ID whether inserted or updated
+                        log_progress(job_id, "process_companies_fetch_id", f"Fetching ID for company: {company_name}")
+                        fetch_response = supabase.table("companies").select("id").eq("name", company_name).limit(1).maybe_single().execute()
+
+                        if fetch_response.data:
+                            company_id = fetch_response.data["id"]
+                            log_progress(job_id, "process_companies_get_id_success", f"Got company ID {company_id} for '{company_name}'")
+                            # Prepare the entry for the candidate_companies association table
+                            company_entries.append({
+                                "candidate_id": candidate_id,
+                                "job_id": job_id, # Make sure job_id is part of the PK/constraint here too
+                                "company_id": company_id,
+                                "designation": company.get("designation", "-"),
+                                "years": company.get("years", "-")
+                            })
+                        else:
+                            # If fetching ID failed after a successful-looking upsert, something is wrong
+                            log_progress(job_id, "process_companies_get_id_error", f"Could not retrieve company ID after upsert for '{company_name}'")
+                            # Raise an error as we cannot proceed without the company ID
+                            raise Exception(f"Could not retrieve company ID after upsert for: {company_name}")
+
+                    except Exception as company_processing_exc:
+                         # Catch errors during upsert or fetch and fail the task
+                         log_progress(job_id, "process_companies_upsert_fetch_error", f"Error upserting/fetching company '{company_name}': {str(company_processing_exc)}")
+                         raise # Re-raise to fail the whole task
+
+            # After looping through all companies, upsert the associations
+            if company_entries:
+                log_progress(job_id, "save_candidate_companies_start", "Upserting candidate_companies associations", {"count": len(company_entries)})
+                try:
+                    # Ensure the on_conflict columns match your actual unique constraint in candidate_companies
+                    assoc_response = supabase.table("candidate_companies").upsert(
+                        company_entries,
+                        on_conflict="candidate_id,job_id,company_id" # Adjust if constraint is different
+                    ).execute()
+                    log_progress(job_id, "save_candidate_companies_success", "Upserted candidate_companies successfully")
+                except Exception as company_assoc_upsert_exc:
+                    log_progress(job_id, "save_candidate_companies_error", f"Exception during candidate_companies upsert: {str(company_assoc_upsert_exc)}")
+                    raise # Fail the whole task if association upsert fails
+            else:
+                 log_progress(job_id, "save_candidate_companies_skip", "No valid company associations to save")
+        else:
+             log_progress(job_id, "process_companies_warning", "Report 'companies' field is not a list or missing")
+        log_progress(job_id, "process_companies_finished", "Finished processing companies")
+        # --- END REVISED Step 4 ---
         # --- FINAL STEP: Prepare and Upsert analysis data (ONLY IF ALL ABOVE SUCCEEDED) ---
         log_progress(job_id, "prepare_final_payload", "Preparing final payload for candidate_resume_analysis")
         supabase_project_id = os.getenv("SUPABASE_PROJECT_ID", "[YOUR_PROJECT_ID]") # Provide default

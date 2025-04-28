@@ -1087,6 +1087,16 @@ styles.add(ParagraphStyle(name='WatermarkStyle', parent=styles['Normal'], alignm
 
 # --- Helper Functions ---
 
+def add_watermark(canvas, doc):
+    """Adds 'hrumbles.ai' watermark to each page."""
+    canvas.saveState()
+    canvas.setFont('Helvetica', 8)
+    canvas.setFillColor(colors.Color(0,0,0, alpha=0.15)) # Faint color
+    # Position in top-right corner
+    canvas.drawRightString(doc.pagesize[0] - 0.5*inch, doc.pagesize[1] - 0.5*inch, "hrumbles.ai")
+    canvas.restoreState()
+# --- END OF PASTE ---
+
 def log_progress(job_id: str, step: str, message: str, data: dict = None):
     """Log a progress step and store in Redis."""
     try:

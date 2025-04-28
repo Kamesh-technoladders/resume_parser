@@ -1,13 +1,15 @@
 FROM python:3.9-slim
 
+# Set environment variables to prevent interactive prompts during apt-get install
+ENV DEBIAN_FRONTEND=noninteractive
+
 # Install system dependencies for pdf2image, pytesseract, and redis-cli with retries
 RUN apt-get update --fix-missing || (sleep 5 && apt-get update --fix-missing) && \
     apt-get install -y --no-install-recommends \
         poppler-utils \
         tesseract-ocr \
         redis-tools \
-        libreoffice-writer \  
-        libreoffice-headless \ 
+        libreoffice \
         fonts-freefont-ttf \ 
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 

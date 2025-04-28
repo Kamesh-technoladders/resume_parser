@@ -1128,7 +1128,7 @@ styles.add(ParagraphStyle(name='SectionHeading',
                           fontSize=14,
                           spaceBefore=16,
                           spaceAfter=8,
-                          textColor=colors.HexColor('#4361EE'), # Royal Blue Heading
+                          textColor=colors.HexColor('#480CA8'), # Royal Blue Heading
                           alignment=TA_LEFT))
 
 styles.add(ParagraphStyle(name='SubHeading',
@@ -1835,7 +1835,16 @@ def upload_report(report_path: str, destination_path: str, job_id: str):
              raise Exception(f"Local report file missing or empty: {report_path}")
         # --- END NEW LOGGING ---
         with open(report_path, "rb") as f:
-            response = supabase.storage.from_(SUPABASE_STORAGE_BUCKET).upload(destination_path, f)
+            response = supabase.storage.from_(SUPABASE_STORAGE_BUCKET).upload(
+                path=destination_path,
+                file=f,
+                # --- Ensure file_options are included ---
+                file_options={
+                    "upsert": True, # Allow overwriting
+                    "content-type": "application/pdf" # Set correct MIME type
+                }
+                # ---
+            )
             log_progress(job_id, "upload_report_success", "Upload API call successful", {"destination": destination_path})
             if hasattr(response, 'status_code') and response.status_code != 200:
                 raise Exception(f"Upload failed with status {response.status_code}: {response.json()}")
@@ -1866,25 +1875,28 @@ def normalize_company_name(name: str) -> str:
 # Background task to process the analysis
 # PASTE THIS ENTIRE FUNCTION INTO tasks.py, REPLACING YOUR CURRENT process_analysis
 
+# PASTE THIS ENTIRE FUNCTION INTO tasks.py, REPLACING THE OLD process_analysis
+
 # Background task to process the analysis
 def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_description_from_request: str): # Renamed input JD
     logger.info("Starting process_analysis for job_id: %s, candidate_id: %s", job_id, candidate_id)
     local_resume_path = None
     local_report_path = None
+    analysis_succeeded_and_saved = False # Flag to track if analysis part worked AND saved
     try:
         # Log task initiation
         log_progress(job_id, "init", "Task started", {
             "candidate_id": candidate_id,
             "resume_path": resume_path
-            # "job_description": job_description_from_request # Avoid logging potentially large JD
+            # Avoid logging potentially large JD here
         })
 
-        # Validate job_id exists in hr_jobs and get description
+        # Validate job_id exists and fetch description from DB
         log_progress(job_id, "fetch_jd", f"Fetching description for job_id {job_id}")
         job_response = supabase.table("hr_jobs").select("description").eq("id", job_id).execute()
         if not job_response.data or not job_response.data[0].get("description"):
-             log_progress(job_id, "error", f"Job description not found in hr_jobs for job_id {job_id}")
-             raise Exception(f"Job description not found for job {job_id}")
+            log_progress(job_id, "error", f"Job description not found in hr_jobs for job_id {job_id}")
+            raise Exception(f"Job description not found for job {job_id}")
         job_description_from_db = job_response.data[0]["description"] # Use DB description
         log_progress(job_id, "fetch_jd", "Fetched job description from DB", {"jd_length": len(job_description_from_db)})
 
@@ -1908,21 +1920,21 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
         log_progress(job_id, "generate_report", "Generating report with Gemini")
         report = generate_report(resume_text, job_description_from_db, job_id) # Pass job_id
         log_progress(job_id, "generate_report", "Report generated successfully", {
-            "overall_score": report.get("overall_match_score", "N/A"), # Use .get()
+            "overall_score": report.get("overall_match_score", "N/A"),
             "candidate_name": report.get("candidate_name", "N/A")
         })
 
         # Ensure candidate exists in hr_candidates
         log_progress(job_id, "check_candidate", f"Checking/creating candidate {candidate_id}")
-        candidate_response = supabase.table("hr_candidates").select("id").eq("id", candidate_id).execute() # Select only id
-        if not candidate_response.data:
+        candidate_check_resp = supabase.table("hr_candidates").select("id").eq("id", candidate_id).execute() # Select only id
+        if not candidate_check_resp.data:
              log_progress(job_id, "create_candidate", f"Candidate {candidate_id} not found, creating...")
              try:
                 insert_data = {
                     "id": candidate_id,
                     "name": report.get("candidate_name", "Unknown"),
                     "email": report.get("email") or f"unknown_{candidate_id}@example.com",
-                    "phone_number": report.get("phone_number"),
+                    "phone_number": report.get("phone_number"), # Use .get() to allow None
                     "linkedin_url": report.get("linkedin"),
                     "github_url": report.get("github")
                 }
@@ -1937,7 +1949,7 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
         log_progress(job_id, "save_report", "Saving report as PDF")
         report_filename = f"report_{job_id}_{candidate_id}.pdf"
         local_report_path = f"/tmp/{report_filename}"
-        save_report_as_pdf(report, local_report_path, job_id) # Pass report dict and output path
+        save_report_as_pdf(report, local_report_path, job_id) # Pass job_id
         log_progress(job_id, "save_report", "Report saved successfully", {
             "local_report_path": local_report_path
         })
@@ -1952,207 +1964,166 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
 
         # Step 1: Prepare candidate_resume_analysis payload
         log_progress(job_id, "prepare_payload", "Preparing payload for candidate_resume_analysis")
-        # Construct Supabase project URL dynamically or ensure SUPABASE_PROJECT_ID is set
         supabase_project_id = os.getenv("SUPABASE_PROJECT_ID")
         if not supabase_project_id:
-             try:
-                 supabase_project_id = SUPABASE_URL.split('.')[0].split('//')[1]
-             except IndexError:
-                  log_progress(job_id, "warning", "Could not determine SUPABASE_PROJECT_ID for report URL")
-                  supabase_project_id = "[YOUR_PROJECT_ID]"
-
+             try: supabase_project_id = SUPABASE_URL.split('.')[0].split('//')[1]
+             except IndexError: supabase_project_id = "[YOUR_PROJECT_ID]" # Fallback
         report_public_url = f"https://{supabase_project_id}.supabase.co/storage/v1/object/public/{SUPABASE_STORAGE_BUCKET}/{report_destination_path}"
-
         resume_payload = {
-            "job_id": job_id,
-            "candidate_id": candidate_id,
-            "resume_text": resume_text or None,
+            "job_id": job_id, "candidate_id": candidate_id, "resume_text": resume_text or None,
             "overall_score": round(report.get("overall_match_score", 0)),
-            "matched_skills": report.get("matched_skills", []),
-            "summary": report.get("summary"),
+            "matched_skills": report.get("matched_skills", []), "summary": report.get("summary"),
             "missing_or_weak_areas": report.get("missing_or_weak_areas", []),
-            "top_skills": report.get("top_skills", []),
-            "development_gaps": report.get("development_gaps", []),
+            "top_skills": report.get("top_skills", []), "development_gaps": report.get("development_gaps", []),
             "additional_certifications": report.get("additional_certifications", []),
             "section_wise_scoring": report.get("section_wise_scoring", {}),
-            "candidate_name": report.get("candidate_name", "Unknown"),
-            "email": report.get("email", ""),
-            "phone_number": report.get("phone_number", ""),
-            "github": report.get("github", ""),
-            "linkedin": report.get("linkedin", ""),
-            "report_url": report_public_url,
-            "has_validated_resume": True, # Set to True
+            "candidate_name": report.get("candidate_name", "Unknown"), "email": report.get("email", ""),
+            "phone_number": report.get("phone_number", ""), "github": report.get("github", ""),
+            "linkedin": report.get("linkedin", ""), "report_url": report_public_url,
+            "has_validated_resume": True, # Set to True here
             "updated_at": datetime.datetime.utcnow().isoformat()
         }
-        log_progress(job_id, "prepare_payload_complete", "Payload prepared", {"keys": list(resume_payload.keys())})
+        log_progress(job_id, "prepare_payload_complete", "Payload prepared")
 
         # Step 2: Upsert candidate_resume_analysis
         log_progress(job_id, "save_candidate_resume_analysis", "Upserting candidate_resume_analysis")
         try:
-            response = supabase.table("candidate_resume_analysis").upsert(
-                resume_payload,
-                on_conflict="job_id,candidate_id" # Correct syntax
+            analysis_response = supabase.table("candidate_resume_analysis").upsert(
+                resume_payload, on_conflict="job_id,candidate_id"
             ).execute()
-            log_progress(job_id, "save_candidate_resume_analysis_response", "Upsert response", {"data": str(response.data), "count": str(response.count)})
-            # Assume success if no exception
+            log_progress(job_id, "save_candidate_resume_analysis_response", "Upsert response", {"data": str(analysis_response.data), "count": str(analysis_response.count)})
+            analysis_succeeded_and_saved = True # Mark analysis save as successful
         except Exception as analysis_upsert_exc:
              log_progress(job_id, "save_candidate_resume_analysis_error", f"Failed to upsert candidate_resume_analysis: {str(analysis_upsert_exc)}")
-             raise # Re-raise
+             raise # Re-raise to fail the whole task
 
-        # # Step 3: Update hr_job_candidates.has_validated_resume
-        # # --- MODIFIED BLOCK ---
-        # log_progress(job_id, "update_hr_job_candidates", "Updating has_validated_resume in hr_job_candidates")
-        # try:
-        #     candidate_response = supabase.table("hr_job_candidates").update(
-        #         {"has_validated_resume": True} # Set to True
-        #     ).eq("job_id", job_id).eq("candidate_id", candidate_id).execute()
+        # --- Step 3: Update hr_job_candidates (Code-based approach) ---
+        if analysis_succeeded_and_saved: # Only run if previous step was definitely successful
+            log_progress(job_id, "update_hr_job_candidates_start", "Attempting to update has_validated_resume in hr_job_candidates")
+            try:
+                # Check if the row exists before trying to update
+                check_response = supabase.table("hr_job_candidates").select(
+                    "job_id", count='exact' # Select minimal column, get count
+                ).eq("job_id", job_id).eq("candidate_id", candidate_id).execute()
 
-        #     # Log the response, but don't fail based on .data
-        #     log_progress(job_id, "update_hr_job_candidates_response", "Supabase response for hr_job_candidates update", {
-        #         "response_data": str(candidate_response.data) if hasattr(candidate_response, 'data') else "N/A",
-        #         "response_count": str(candidate_response.count) if hasattr(candidate_response, 'count') else "N/A"
-        #     })
-        #     # Assume success if .execute() did not raise an HTTP error exception
+                if check_response.count == 0:
+                    # Log that the row was missing - this might be expected or an error depending on your flow
+                    log_progress(job_id, "update_hr_job_candidates_skip", f"Row NOT FOUND in hr_job_candidates for job {job_id}, candidate {candidate_id}. Cannot update flag.")
+                else:
+                    # Row exists, proceed with the update
+                    log_progress(job_id, "update_hr_job_candidates_found", f"Row FOUND in hr_job_candidates. Updating has_validated_resume=True.")
+                    update_response = supabase.table("hr_job_candidates").update(
+                        {"has_validated_resume": True} # Set to True
+                    ).eq("job_id", job_id).eq("candidate_id", candidate_id).execute()
 
-        # except Exception as update_exc:
-        #     # Log the specific exception during update
-        #     tb_str = traceback.format_exc()
-        #     log_progress(job_id, "update_hr_job_candidates_error", f"Exception during hr_job_candidates update: {str(update_exc)}", {
-        #         "error_type": type(update_exc).__name__,
-        #         "error_message": str(update_exc),
-        #         "traceback": tb_str
-        #     })
-        #     # Re-raise to fail the task
-        #     raise Exception(f"Failed to update hr_job_candidates.has_validated_resume: {str(update_exc)}") from update_exc
-        # # --- END MODIFIED BLOCK ---
+                    # Log the response from the update attempt
+                    log_progress(job_id, "update_hr_job_candidates_response", "Supabase response for hr_job_candidates update", {
+                        "response_data": str(update_response.data) if hasattr(update_response, 'data') else "N/A",
+                        "response_count": str(update_response.count) if hasattr(update_response, 'count') else "N/A"
+                    })
+                    # Assume success if execute() did not raise an error
 
-        # Step 4: Save and check company associations in candidate_companies
-        # --- MODIFIED BLOCK ---
+            except Exception as update_exc:
+                # Log specific errors during the check or update, but don't necessarily fail the whole task
+                tb_str = traceback.format_exc()
+                log_progress(job_id, "update_hr_job_candidates_error", f"Non-fatal error during hr_job_candidates check/update: {str(update_exc)}", {
+                    "error_type": type(update_exc).__name__, "error_message": str(update_exc), "traceback": tb_str
+                })
+                logger.error(f"Job {job_id} - Non-fatal error updating hr_job_candidates: {update_exc}") # Log as error but allow task to potentially continue
+
+        # --- Step 4: Save and check company associations ---
         log_progress(job_id, "process_companies", "Processing company associations")
         company_entries = []
-        raw_companies = report.get("companies", []) # Get from report dict
-
-        if isinstance(raw_companies, list): # Check if it's a list
+        raw_companies = report.get("companies", [])
+        if isinstance(raw_companies, list):
             for company in raw_companies:
-                # Check if entry is dict and has a non-empty name
                 if isinstance(company, dict) and company.get("name"):
                     company_name = company["name"]
-                    # Normalize company name
                     normalized_name = normalize_company_name(company_name)
-                    if not normalized_name: # Skip if name becomes empty after normalization
-                        log_progress(job_id, "process_companies_warning", f"Skipping company with empty normalized name: {company_name}")
-                        continue
-
-                    # Check if company exists by normalized_name or insert it
+                    if not normalized_name: continue # Skip empty normalized names
                     try:
                         company_id = None
-                        # Use SELECT with count first to check existence efficiently
                         company_check_response = supabase.table("companies").select("id", count='exact').eq("normalized_name", normalized_name).execute()
-
                         if company_check_response.count > 0:
                             company_id = company_check_response.data[0]["id"]
-                            log_progress(job_id, "process_companies_found", f"Found existing company ID {company_id} for '{company_name}' (Normalized: {normalized_name})")
                         else:
-                            # Insert new company with normalized_name
                             log_progress(job_id, "process_companies_insert", f"Inserting new company: {company_name} (Normalized: {normalized_name})")
-                            new_company_response = supabase.table("companies").insert({
-                                "name": company_name, # Store original name
-                                "normalized_name": normalized_name # Store normalized name for lookups
-                            }).execute()
+                            new_company_response = supabase.table("companies").insert({"name": company_name, "normalized_name": normalized_name}).execute()
                             if new_company_response.data:
                                 company_id = new_company_response.data[0]["id"]
-                                log_progress(job_id, "process_companies_insert_success", f"Inserted new company ID {company_id}")
                             else:
-                                # Log failure but maybe continue with other companies? Or raise?
                                 log_progress(job_id, "process_companies_insert_error", f"Failed to insert company: {company_name}")
-                                continue # Skip this company association if insert failed
-
-                        # If we have a company_id, prepare the entry for upsert
+                                continue # Skip if insert failed
                         if company_id:
                             company_entries.append({
-                                "candidate_id": candidate_id,
-                                "job_id": job_id, # Include job_id if it's part of the unique constraint/primary key
-                                "company_id": company_id,
-                                "designation": company.get("designation", "-"),
-                                "years": company.get("years", "-")
+                                "candidate_id": candidate_id, "job_id": job_id, "company_id": company_id,
+                                "designation": company.get("designation", "-"), "years": company.get("years", "-")
                             })
                     except Exception as company_lookup_exc:
-                         log_progress(job_id, "process_companies_lookup_error", f"Error looking up/inserting company '{company_name}': {str(company_lookup_exc)}")
-                         # Decide whether to skip or raise
-
-            # Upsert the collected company associations
+                         log_progress(job_id, "process_companies_lookup_error", f"Error processing company '{company_name}': {str(company_lookup_exc)}")
+            # Upsert collected company associations
             if company_entries:
-                log_progress(job_id, "save_candidate_companies_start", "Preparing to upsert candidate_companies", {"count": len(company_entries)})
+                log_progress(job_id, "save_candidate_companies_start", "Upserting candidate_companies", {"count": len(company_entries)})
                 try:
-                    # Ensure the on_conflict columns match your actual unique constraint in the DB
-                    company_response = supabase.table("candidate_companies").upsert(
-                        company_entries,
-                        on_conflict="candidate_id,job_id,company_id" # Adjust if constraint is different
+                    supabase.table("candidate_companies").upsert(
+                        company_entries, on_conflict="candidate_id,job_id,company_id" # Adjust constraint if needed
                     ).execute()
                     log_progress(job_id, "save_candidate_companies_success", "Upserted candidate_companies successfully")
-
                 except Exception as company_upsert_exc:
-                    # Log the specific exception during company upsert
-                    tb_str = traceback.format_exc()
-                    log_progress(job_id, "save_candidate_companies_error", f"Exception during candidate_companies upsert: {str(company_upsert_exc)}", {
-                        "error_type": type(company_upsert_exc).__name__,
-                        "error_message": str(company_upsert_exc),
-                        "traceback": tb_str
-                    })
-                    # Re-raise to fail the task
-                    raise Exception(f"Failed to upsert candidate_companies: {str(company_upsert_exc)}") from company_upsert_exc
+                    log_progress(job_id, "save_candidate_companies_error", f"Exception during candidate_companies upsert: {str(company_upsert_exc)}")
+                    raise # Fail the whole task if this critical step fails
             else:
-                 log_progress(job_id, "save_candidate_companies_skip", "No valid company entries found in report to upsert")
+                 log_progress(job_id, "save_candidate_companies_skip", "No valid company entries found to upsert")
         else:
-             log_progress(job_id, "process_companies_warning", "Report 'companies' field is not a list or missing")
-        # --- END MODIFIED BLOCK ---
+             log_progress(job_id, "process_companies_warning", "Report 'companies' field is not a list")
 
-
-        # If execution reaches here, the entire try block was successful
+        # If execution reaches here, the main try block completed successfully
         log_progress(job_id, "success", "Task completed successfully")
         return {"status": "finished", "candidate_id": candidate_id}
 
     except Exception as e:
-        # This block runs if ANY error occurred in the try block above
+        # This block runs if ANY error occurred in the main try block
         tb_str = traceback.format_exc()
         logger.error(f"Job {job_id} - process_analysis_error: Task failed for candidate {candidate_id}: {str(e)}")
         logger.error(f"Job {job_id} - Traceback:\n{tb_str}")
+        log_progress(job_id, "error", f"Task failed: {str(e)}", {"error_message": str(e), "traceback": tb_str})
 
-        # Log the failure step via log_progress
-        log_progress(job_id, "error", f"Task failed: {str(e)}", {
-             "error_message": str(e),
-             "traceback": tb_str
-        })
-
-        # --- Set flags to FALSE on failure ---
+        # --- Update status to FALSE on failure ---
         try:
             log_progress(job_id, "failure_update_status", "Attempting to set has_validated_resume=False in DB due to failure")
-            # Use maybeSingle() or handle potential errors if the row doesn't exist yet
+            # Update analysis table first (might not exist if initial steps failed, but update is safe)
             supabase.table("candidate_resume_analysis").update(
                 {"has_validated_resume": False, "summary": f"Processing failed: {str(e)[:500]}"}
             ).eq("job_id", job_id).eq("candidate_id", candidate_id).execute()
 
-            # supabase.table("hr_job_candidates").update(
-            #     {"has_validated_resume": False}
-            # ).eq("job_id", job_id).eq("candidate_id", candidate_id).execute()
-            log_progress(job_id, "failure_update_status_success", "Successfully set has_validated_resume=False")
+            # Conditionally update job candidates table ONLY IF the row exists
+            check_response = supabase.table("hr_job_candidates").select("job_id", count='exact').eq("job_id", job_id).eq("candidate_id", candidate_id).execute()
+            if check_response.count > 0:
+                supabase.table("hr_job_candidates").update(
+                    {"has_validated_resume": False}
+                ).eq("job_id", job_id).eq("candidate_id", candidate_id).execute()
+                log_progress(job_id, "failure_update_hr_job_candidates_success", "Set has_validated_resume=False in hr_job_candidates")
+            else:
+                 log_progress(job_id, "failure_update_hr_job_candidates_skip", "Skipped setting flag in hr_job_candidates as row was not found")
+
+            log_progress(job_id, "failure_update_status_complete", "Failure status update attempt finished")
         except Exception as db_update_e:
+             # Log errors during the failure update process, but don't overwrite original error
              logger.error(f"Job {job_id} - DB_UPDATE_ERROR_ON_FAIL: Failed to update status to failed in DB: {db_update_e}")
-             log_progress(job_id, "failure_update_status_error", f"Failed to set has_validated_resume=False: {str(db_update_e)}")
+             log_progress(job_id, "failure_update_status_error", f"Failed during failure status update: {str(db_update_e)}")
         # --- END FAILURE UPDATE ---
 
         # Return failure status for RQ result
         return {"status": "failed", "candidate_id": candidate_id, "error": str(e)}
 
     finally:
-        # Cleanup logic remains the same
+        # Cleanup logic
         try:
             log_progress(job_id, "cleanup", "Cleaning up temporary files")
-            if local_resume_path and os.path.exists(local_resume_path):
-                os.remove(local_resume_path)
-            if local_report_path and os.path.exists(local_report_path):
-                os.remove(local_report_path)
+            if local_resume_path and os.path.exists(local_resume_path): os.remove(local_resume_path)
+            if local_report_path and os.path.exists(local_report_path): os.remove(local_report_path)
             log_progress(job_id, "cleanup", "Temporary files removed successfully")
         except Exception as cleanup_e:
             log_progress(job_id, "cleanup_error", f"Failed to clean up temporary files: {str(cleanup_e)}")
 
+# END OF UPDATED process_analysis FUNCTION

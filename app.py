@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from rq.job import Job
 import tasks
-from config import queue, redis_conn, supabase
+from config import queue, redis_conn, supabase_admin_client as supabase
 import logging
 
 app = Flask(__name__)
@@ -20,6 +20,7 @@ def validate_candidate():
     candidate_id = data.get('candidate_id')
     resume_url = data.get('resume_url')
     job_description = data.get('job_description')
+    organization_id = data.get('organization_id')
 
     if not all([job_id, candidate_id, resume_url, job_description]):
         logger.error("Missing required fields: %s", data)
@@ -27,19 +28,19 @@ def validate_candidate():
 
     # Validate job_id exists in hr_jobs
     try:
-        response = supabase.table("hr_jobs").select("id, job_id").eq("job_id", job_id).execute()
+        response = supabase.table("hr_jobs").select("id, job_id").eq("job_id", job_id).eq("organization_id", organization_id).execute()
         logger.info("Supabase response for job_id %s: %s", job_id, response)
         if not response.data:
             all_jobs = supabase.table("hr_jobs").select("job_id").execute()
             logger.info("All job IDs in hr_jobs: %s", all_jobs.data)
-            logger.error("Job ID %s not found in hr_jobs", job_id)
-            return jsonify({"error": "Job ID not found"}), 404
+            logger.error("Job ID %s not found in hr_jobs for organization_id", job_id, organization_id)
+            return jsonify({"error": "Job ID not found for the specified organization"}), 404
         job_uuid = response.data[0]["id"]
     except Exception as e:
-        logger.error("Error validating job_id %s: %s", job_id, str(e))
+        logger.error("Error validating job_id %s for organization_id  %s: %s", job_id, organization_id, str(e))
         return jsonify({"error": "Failed to validate job ID"}), 500
 
-    job = queue.enqueue(tasks.process_analysis, job_uuid, candidate_id, resume_url, job_description)
+    job = queue.enqueue(tasks.process_analysis, job_uuid, candidate_id, resume_url, job_description, organization_id)
     logger.info("Enqueued job with ID: %s", job.id)
     return jsonify({"job_id": job.id, "job_uuid": job_uuid}), 202
 

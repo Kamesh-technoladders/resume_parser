@@ -12,7 +12,7 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-@app.route('/api/validate-candidate', methods=['POST'])
+@app.route('/api/validate-candidate', methods=['POST', 'OPTIONS'])
 def validate_candidate():
     logger.info("Received request to /api/validate-candidate with headers: %s", request.headers)
     data = request.get_json()

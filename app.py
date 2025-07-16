@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, make_response # <--- CHANGE HERE: Add make_response
 from flask_cors import CORS
 from rq.job import Job
 import tasks
@@ -14,6 +14,12 @@ logger = logging.getLogger(__name__)
 
 @app.route('/api/validate-candidate', methods=['POST', 'OPTIONS'])
 def validate_candidate():
+    # START OF CHANGE: Add this block of code here to fix the timeout.
+    # This handles the browser's preflight check before it tries to read the request body.
+    if request.method == 'OPTIONS':
+        response = make_response()
+        return response
+    # END OF CHANGE
     logger.info("Received request to /api/validate-candidate with headers: %s", request.headers)
     data = request.get_json()
     job_id = data.get('job_id')

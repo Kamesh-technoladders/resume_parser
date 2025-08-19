@@ -27,8 +27,9 @@ def validate_candidate():
     resume_url = data.get('resume_url')
     job_description = data.get('job_description')
     organization_id = data.get('organization_id')
+    user_id = data.get('user_id')
 
-    if not all([job_id, candidate_id, resume_url, job_description]):
+    if not all([job_id, candidate_id, resume_url, job_description, organization_id, user_id ]):
         logger.error("Missing required fields: %s", data)
         return jsonify({"error": "Missing required fields"}), 400
 
@@ -46,7 +47,7 @@ def validate_candidate():
         logger.error("Error validating job_id %s for organization_id  %s: %s", job_id, organization_id, str(e))
         return jsonify({"error": "Failed to validate job ID"}), 500
 
-    job = queue.enqueue(tasks.process_analysis, job_uuid, candidate_id, resume_url, job_description, organization_id)
+    job = queue.enqueue(tasks.process_analysis, job_uuid, candidate_id, resume_url, job_description, organization_id, user_id)
     logger.info("Enqueued job with ID: %s", job.id)
     return jsonify({"job_id": job.id, "job_uuid": job_uuid}), 202
 

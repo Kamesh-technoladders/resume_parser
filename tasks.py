@@ -251,10 +251,19 @@ def clean_gemini_output(text: str) -> str:
     return text
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def generate_report(resume_text: str, job_description: str, job_id: str) -> dict:
+def generate_report(resume_text: str, job_description: str, job_id: str, organization_id: str, user_id: str) -> dict:
     """Generates analysis report using Gemini, includes detailed logging."""
     attempt_id = os.urandom(4).hex()
     current_step = "init"
+
+     # --- START: MODIFICATION ---
+    input_tokens = 0
+    output_tokens = 0
+    status = 'FAILURE'
+    analysis_for_log = None
+    raw_gemini_text = ""
+    # --- END: MODIFICATION ---
+    
     try:
         current_step = "log_start"; log_progress(job_id, f"generate_report_start_{attempt_id}", "Entering generate_report")
         current_step = "log_raw_inputs"; log_progress(job_id, f"generate_report_raw_inputs_{attempt_id}", "Raw input previews", {"resume_preview": resume_text[:200], "jd_preview": job_description[:200]})
@@ -332,6 +341,13 @@ Use symbols: ✅ for 'yes', ⚠ for 'partial', ❌ for 'no'. IMPORTANT: Ensure t
         response = gemini_model.generate_content(prompt)
         current_step = "after_api_call"; log_progress(job_id, f"generate_report_after_api_call_{attempt_id}", "Returned from Gemini API")
 
+        
+        if response.usage_metadata:
+            input_tokens = response.usage_metadata.prompt_token_count
+            output_tokens = response.usage_metadata.candidates_token_count
+        raw_gemini_text = response.text
+  
+
         raw_gemini_text = response.text
         current_step = "log_raw_output"; log_progress(job_id, f"generate_report_raw_output_{attempt_id}", "Raw Gemini response", {"preview": raw_gemini_text[:2000]})
         current_step = "clean_output"; gemini_output = clean_gemini_output(raw_gemini_text); log_progress(job_id, f"generate_report_cleaned_output_{attempt_id}", "Cleaned Gemini response", {"preview": gemini_output[:2000]})
@@ -349,6 +365,8 @@ Use symbols: ✅ for 'yes', ⚠ for 'partial', ❌ for 'no'. IMPORTANT: Ensure t
             except (ValueError, SyntaxError) as fallback_e:
                 log_progress(job_id, f"generate_report_fallback_error_{attempt_id}", f"Fallback parse failed: {fallback_e}", {"preview": gemini_output[:2000]})
                 raise Exception(f"Invalid JSON from Gemini after fallback. Original: {e}. Fallback: {fallback_e}") from e
+            status = 'SUCCESS'
+            analysis_for_log = report
 
         current_step = "log_parsed_report"; log_progress(job_id, f"generate_report_parsed_{attempt_id}", "Parsed report structure", {"keys": list(report.keys())})
 
@@ -382,10 +400,37 @@ Use symbols: ✅ for 'yes', ⚠ for 'partial', ❌ for 'no'. IMPORTANT: Ensure t
         return report
 
     except Exception as e:
+        safe_raw_text = json.dumps(raw_gemini_text) # Safely encode the raw text as a JSON string
+        analysis_for_log = {
+            "error": str(e), 
+            "failed_step": current_step, 
+            "raw_response": safe_raw_text
+        }
         tb_str = traceback.format_exc()
         logger.error(f"Job {job_id} - generate_report_error_{attempt_id}: Exception at step '{current_step}': {e}\n{tb_str}")
         log_progress(job_id, f"generate_report_error_{attempt_id}", f"Exception at step '{current_step}': {e}", {"type": type(e).__name__, "step": current_step, "traceback": tb_str})
         raise Exception(f"Failed report generation at step '{current_step}': {e}") from e
+    
+    finally:
+        try:
+            if organization_id and user_id:
+                log_progress(job_id, f"log_gemini_usage_{attempt_id}", "Logging Gemini usage to database")
+                supabase.from_('hr_gemini_usage_log').insert({
+                    "organization_id": organization_id,
+                    "created_by": user_id,
+                    "status": status,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "analysis_response": analysis_for_log,
+                    "parsed_email": analysis_for_log.get('email') if isinstance(analysis_for_log, dict) else None,
+                    "usage_type": 'resume_validation'
+                }).execute()
+            else:
+                log_progress(job_id, f"log_gemini_usage_skipped_{attempt_id}", "Skipping usage logging due to missing org/user ID")
+        except Exception as log_db_e:
+            logger.error(f"Job {job_id} - FAILED_TO_LOG_USAGE: Could not write to hr_gemini_usage_log. Error: {log_db_e}")
+            log_progress(job_id, f"log_gemini_usage_error_{attempt_id}", "Failed to log usage to DB", {"error": str(log_db_e)})
+        
 
 def save_report_as_pdf(report: dict, output_path: str, job_id: str):
     """Saves the analysis report as a styled PDF using Platypus."""
@@ -509,9 +554,9 @@ def normalize_company_name(name: str) -> str:
     return ' '.join(normalized.split())
 
 
-def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_description_from_request: str, organization_id: str):
+def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_description_from_request: str, organization_id: str, user_id: str):
     """Main background task to process resume analysis."""
-    logger.info(f"Starting process_analysis for job_id: {job_id}, candidate_id: {candidate_id}, organization_id: {organization_id}")
+    logger.info(f"Starting process_analysis for job_id: {job_id}, candidate_id: {candidate_id}, organization_id: {organization_id}, user_id: {user_id}")
     local_resume_path = None
     local_report_path = None
 
@@ -542,7 +587,7 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
 
       
         log_progress(job_id, "generate_report", "Generating report with Gemini")
-        report = generate_report(resume_text, job_description_from_db, job_id)
+        report = generate_report(resume_text, job_description_from_db, job_id, organization_id, user_id)
         log_progress(job_id, "generate_report_success", "Report generated", {"score": report.get("overall_match_score", "N/A")})
 
       

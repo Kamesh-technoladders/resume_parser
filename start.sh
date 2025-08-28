@@ -56,6 +56,7 @@ docker run -d \
   -p 5005:5005 \
   --name $APP_CONTAINER \
   --network $NETWORK_NAME \
+  --network proxy-network-prod \
   --env-file .env \
   $APP_IMAGE
   # The container will now automatically run entrypoint.sh (or container.sh)

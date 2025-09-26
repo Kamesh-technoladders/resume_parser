@@ -29,8 +29,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from config import redis_conn # Assuming config.py defines redis_conn
 
 # API Clients
-from config import gemini_model, supabase_admin_client as supabase, SUPABASE_STORAGE_BUCKET, SUPABASE_REPORT_PATH_PREFIX, SUPABASE_URL # Import needed variables
-
+from config import openai_client, supabase_admin_client as supabase, SUPABASE_STORAGE_BUCKET, SUPABASE_REPORT_PATH_PREFIX, SUPABASE_URL
 # --- Custom Exception ---
 class FileNotFoundInStorageError(Exception):
     """Custom exception for when a file is not found in Supabase Storage."""
@@ -337,36 +336,35 @@ Use symbols: ✅ for 'yes', ⚠ for 'partial', ❌ for 'no'. IMPORTANT: Ensure t
         prompt = prompt_template.format(job_description=escaped_job_desc, resume_text=escaped_resume)
         current_step = "after_format"; log_progress(job_id, f"generate_report_after_format_{attempt_id}", "Prompt formatted", {"prompt_preview": prompt[:500]})
 
-        current_step = "before_api_call"; log_progress(job_id, f"generate_report_before_api_call_{attempt_id}", "Calling Gemini API")
-        response = gemini_model.generate_content(prompt)
-        current_step = "after_api_call"; log_progress(job_id, f"generate_report_after_api_call_{attempt_id}", "Returned from Gemini API")
-
+         current_step = "before_api_call"; log_progress(job_id, f"generate_report_before_api_call_{attempt_id}", "Calling OpenAI API")
         
-        if response.usage_metadata:
-            input_tokens = response.usage_metadata.prompt_token_count
-            output_tokens = response.usage_metadata.candidates_token_count
-        raw_gemini_text = response.text
-  
+        response = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            temperature=0.2,
+        )
+        
+        current_step = "after_api_call"; log_progress(job_id, f"generate_report_after_api_call_{attempt_id}", "Returned from OpenAI API")
 
-        raw_gemini_text = response.text
-        current_step = "log_raw_output"; log_progress(job_id, f"generate_report_raw_output_{attempt_id}", "Raw Gemini response", {"preview": raw_gemini_text[:2000]})
-        current_step = "clean_output"; gemini_output = clean_gemini_output(raw_gemini_text); log_progress(job_id, f"generate_report_cleaned_output_{attempt_id}", "Cleaned Gemini response", {"preview": gemini_output[:2000]})
+        if response.usage:
+            input_tokens = response.usage.prompt_tokens
+            output_tokens = response.usage.completion_tokens
+        
+        raw_ai_text = response.choices[0].message.content if response.choices else ""
+
+        current_step = "log_raw_output"; log_progress(job_id, f"generate_report_raw_output_{attempt_id}", "Raw OpenAI response", {"preview": raw_ai_text[:2000]})
+        current_step = "clean_output"; ai_output = clean_ai_output(raw_ai_text); log_progress(job_id, f"generate_report_cleaned_output_{attempt_id}", "Cleaned OpenAI response", {"preview": ai_output[:2000]})
 
         current_step = "parse_json"
         try:
-            report = json.loads(gemini_output)
+            report = json.loads(ai_output)
         except json.JSONDecodeError as e:
-            log_progress(job_id, f"generate_report_parse_error_{attempt_id}", f"Failed JSON parse: {e}", {"preview": gemini_output[:2000]})
-            current_step = "parse_fallback"; log_progress(job_id, f"generate_report_fallback_{attempt_id}", "Attempting fallback parse")
-            try:
-                report = ast.literal_eval(gemini_output)
-                if not isinstance(report, dict): raise ValueError("Fallback did not yield dict")
-                log_progress(job_id, f"generate_report_fallback_success_{attempt_id}", "Fallback parse successful")
-            except (ValueError, SyntaxError) as fallback_e:
-                log_progress(job_id, f"generate_report_fallback_error_{attempt_id}", f"Fallback parse failed: {fallback_e}", {"preview": gemini_output[:2000]})
-                raise Exception(f"Invalid JSON from Gemini after fallback. Original: {e}. Fallback: {fallback_e}") from e
-            status = 'SUCCESS'
-            analysis_for_log = report
+            log_progress(job_id, f"generate_report_parse_error_{attempt_id}", f"Failed JSON parse: {e}", {"preview": ai_output[:2000]})
+            raise Exception(f"Invalid JSON from OpenAI. Original error: {e}") from e
+
+        status = 'SUCCESS'
+        analysis_for_log = report
 
         current_step = "log_parsed_report"; log_progress(job_id, f"generate_report_parsed_{attempt_id}", "Parsed report structure", {"keys": list(report.keys())})
 
@@ -423,7 +421,7 @@ Use symbols: ✅ for 'yes', ⚠ for 'partial', ❌ for 'no'. IMPORTANT: Ensure t
                     "output_tokens": output_tokens,
                     "analysis_response": analysis_for_log,
                     "parsed_email": analysis_for_log.get('email') if isinstance(analysis_for_log, dict) else None,
-                    "usage_type": 'resume_validation'
+                     "usage_type": 'resume_validation_openai'
                 }).execute()
             else:
                 log_progress(job_id, f"log_gemini_usage_skipped_{attempt_id}", "Skipping usage logging due to missing org/user ID")
@@ -586,7 +584,7 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
         log_progress(job_id, "extract_text_success", "Text extracted", {"length": len(resume_text)})
 
       
-        log_progress(job_id, "generate_report", "Generating report with Gemini")
+        log_progress(job_id, "generate_report", "Generating report with OpenAI")
         report = generate_report(resume_text, job_description_from_db, job_id, organization_id, user_id)
         log_progress(job_id, "generate_report_success", "Report generated", {"score": report.get("overall_match_score", "N/A")})
 

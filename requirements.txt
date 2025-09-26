@@ -9,8 +9,8 @@ supabase==2.8.1
 pdf2image==1.17.0
 pytesseract==0.3.10
 
-# Gemini API
-google-generativeai==0.8.2
+# Open API
+openai==1.35.7
 
 # PDF generation
 reportlab==4.2.2

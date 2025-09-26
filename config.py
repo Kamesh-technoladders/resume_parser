@@ -1,6 +1,6 @@
 import os
 from supabase import create_client, Client
-from google.generativeai import GenerativeModel, configure
+from openai import OpenAI
 from dotenv import load_dotenv
 from redis import Redis
 from rq import Queue
@@ -15,24 +15,25 @@ SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY") #
 SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET")
 SUPABASE_RESUME_PATH_PREFIX = os.getenv("SUPABASE_RESUME_PATH_PREFIX")
 SUPABASE_REPORT_PATH_PREFIX = os.getenv("SUPABASE_REPORT_PATH_PREFIX")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PORT = int(os.getenv("PORT", 5005))
 
-# Validate environment variables
-if not all([SUPABASE_URL, SUPABASE_KEY, SUPABASE_STORAGE_BUCKET, SUPABASE_RESUME_PATH_PREFIX, SUPABASE_REPORT_PATH_PREFIX, GEMINI_API_KEY, SUPABASE_SERVICE_KEY]):
-    raise ValueError("Missing required environment variables. Ensure SUPABASE_URL, SUPABASE_KEY, SUPABASE_STORAGE_BUCKET, SUPABASE_RESUME_PATH_PREFIX, SUPABASE_REPORT_PATH_PREFIX, and GEMINI_API_KEY are set.")
+if not all([SUPABASE_URL, SUPABASE_KEY, SUPABASE_STORAGE_BUCKET, SUPABASE_RESUME_PATH_PREFIX, SUPABASE_REPORT_PATH_PREFIX, OPENAI_API_KEY, SUPABASE_SERVICE_KEY]):
+    raise ValueError("Missing required environment variables. Ensure SUPABASE_URL, SUPABASE_KEY, SUPABASE_STORAGE_BUCKET, SUPABASE_RESUME_PATH_PREFIX, SUPABASE_REPORT_PATH_PREFIX, and OPENAI_API_KEY are set.")
 
 # Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # !! THIS IS THE NEW ADMIN CLIENT FOR YOUR SERVER !!
-# It will bypass RLS. Use this for all backend operations.
 supabase_admin_client: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 
-# Configure Gemini API
-configure(api_key=GEMINI_API_KEY)
-gemini_model = GenerativeModel("gemini-1.5-pro")
+# --- REMOVED: Gemini API Configuration ---
+# configure(api_key=GEMINI_API_KEY)
+# gemini_model = GenerativeModel("gemini-1.5-pro")
+
+# --- ADDED: Initialize OpenAI client ---
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Initialize Redis and RQ queue
 redis_conn = Redis(host='redis', port=6379)

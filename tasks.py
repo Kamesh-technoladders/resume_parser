@@ -84,20 +84,48 @@ def log_progress(job_id: str, step: str, message: str, data: dict = None):
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def download_resume(resume_path: str) -> str:
-    """Downloads resume, raises FileNotFoundInStorageError if not found."""
+    """
+    Downloads resume from Supabase Storage.
+    Handles both full public URLs and relative paths.
+    Raises FileNotFoundInStorageError if not found.
+    """
     try:
-        response_content = supabase.storage.from_(SUPABASE_STORAGE_BUCKET).download(resume_path)
-        local_path = f"/tmp/{os.path.basename(resume_path)}"
-        with open(local_path, "wb") as f: f.write(response_content)
+        # --- START: MODIFICATION TO PARSE URL ---
+        bucket_to_use = SUPABASE_STORAGE_BUCKET
+        path_to_download = resume_path
+
+        if resume_path.startswith("http"):
+            # This is a full public URL, we need to parse it
+            try:
+                # Split the URL to get the path part after '/public/'
+                # This will give us something like: "talent-pool-resumes/some-uuid.pdf"
+                full_path_in_bucket = resume_path.split('/public/')[1]
+                
+                # The first part is the bucket, the rest is the file path
+                path_parts = full_path_in_bucket.split('/')
+                bucket_to_use = path_parts[0]
+                path_to_download = '/'.join(path_parts[1:])
+
+                log_progress(job_id, "download_resume_parse", "Parsed public URL", {"bucket": bucket_to_use, "path": path_to_download})
+            except (IndexError, AttributeError):
+                 # If parsing fails, log it and proceed with the original path, though it will likely fail
+                 log_progress(job_id, "download_resume_parse_error", "Could not parse public URL, using original path", {"url": resume_path})
+                 pass # Fallback to using the original path and default bucket
+        # --- END: MODIFICATION TO PARSE URL ---
+        
+        # Use the (potentially parsed) bucket and path for download
+        response_content = supabase.storage.from_(bucket_to_use).download(path_to_download)
+        
+        local_path = f"/tmp/{os.path.basename(path_to_download)}"
+        with open(local_path, "wb") as f:
+            f.write(response_content)
         logger.info(f"Successfully downloaded resume to {local_path}")
         return local_path
+
     except Exception as e:
         error_message = str(e).lower()
-        # Check for indicators of file not found (adjust if needed based on library version)
-        if 'not found' in error_message or 'empty path' in error_message or \
-           'status_code=400' in error_message or 'statuscode=400' in error_message or \
-           'status_code=404' in error_message or 'statuscode=404' in error_message:
-            logger.error(f"Resume file not found in Supabase Storage at path: {resume_path}. Error: {e}")
+        if 'not found' in error_message or 'status_code=400' in error_message or 'statuscode=400' in error_message or 'status_code=404' in error_message:
+            logger.error(f"Resume file not found in Supabase Storage. Path attempted: '{path_to_download}' in bucket '{bucket_to_use}'. Error: {e}")
             raise FileNotFoundInStorageError(f"Resume file not found in Supabase Storage: {resume_path}") from e
         else:
             logger.error(f"Failed to download resume from Supabase. Path: {resume_path}. Error: {e}")

@@ -336,7 +336,7 @@ Use symbols: ✅ for 'yes', ⚠ for 'partial', ❌ for 'no'. IMPORTANT: Ensure t
         prompt = prompt_template.format(job_description=escaped_job_desc, resume_text=escaped_resume)
         current_step = "after_format"; log_progress(job_id, f"generate_report_after_format_{attempt_id}", "Prompt formatted", {"prompt_preview": prompt[:500]})
 
-         current_step = "before_api_call"; log_progress(job_id, f"generate_report_before_api_call_{attempt_id}", "Calling OpenAI API")
+        current_step = "before_api_call"; log_progress(job_id, f"generate_report_before_api_call_{attempt_id}", "Calling OpenAI API")
         
         response = openai_client.chat.completions.create(
             model="gpt-4o",

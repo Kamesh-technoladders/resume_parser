@@ -83,37 +83,28 @@ def log_progress(job_id: str, step: str, message: str, data: dict = None):
         print(f"[FALLBACK LOG] Job {job_id} - {step}: {message} - Error in log_progress itself: {log_e}")
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def download_resume(resume_path: str) -> str:
+def download_resume(resume_path: str, job_id: str) -> str: # <--- MODIFICATION: Added job_id parameter
     """
     Downloads resume from Supabase Storage.
     Handles both full public URLs and relative paths.
     Raises FileNotFoundInStorageError if not found.
     """
     try:
-        # --- START: MODIFICATION TO PARSE URL ---
         bucket_to_use = SUPABASE_STORAGE_BUCKET
         path_to_download = resume_path
 
         if resume_path.startswith("http"):
-            # This is a full public URL, we need to parse it
             try:
-                # Split the URL to get the path part after '/public/'
-                # This will give us something like: "talent-pool-resumes/some-uuid.pdf"
                 full_path_in_bucket = resume_path.split('/public/')[1]
-                
-                # The first part is the bucket, the rest is the file path
                 path_parts = full_path_in_bucket.split('/')
                 bucket_to_use = path_parts[0]
                 path_to_download = '/'.join(path_parts[1:])
-
+                # MODIFICATION: Now correctly uses job_id passed as a parameter
                 log_progress(job_id, "download_resume_parse", "Parsed public URL", {"bucket": bucket_to_use, "path": path_to_download})
             except (IndexError, AttributeError):
-                 # If parsing fails, log it and proceed with the original path, though it will likely fail
                  log_progress(job_id, "download_resume_parse_error", "Could not parse public URL, using original path", {"url": resume_path})
-                 pass # Fallback to using the original path and default bucket
-        # --- END: MODIFICATION TO PARSE URL ---
+                 pass
         
-        # Use the (potentially parsed) bucket and path for download
         response_content = supabase.storage.from_(bucket_to_use).download(path_to_download)
         
         local_path = f"/tmp/{os.path.basename(path_to_download)}"
@@ -264,22 +255,22 @@ def extract_text_from_file(file_path: str, job_id: str) -> str:
              except Exception as cleanup_err:
                  log_progress(job_id, "extract_text_cleanup_error", f"Failed to remove temp PDF {temp_pdf_path}: {cleanup_err}")
 
-def clean_gemini_output(text: str) -> str:
-    """Cleans Gemini output, extracts JSON."""
+def clean_ai_output(text: str) -> str:
+    """Cleans AI output, extracts JSON."""
     text = text.strip()
     if text.startswith('```json'): text = text[7:].rstrip('```')
     elif text.startswith('```'): text = text[3:].rstrip('```')
     text = text.strip()
     start = text.find('{'); end = text.rfind('}')
     if start != -1 and end != -1 and end > start: text = text[start:end+1]
-    else: logger.warning(f"clean_gemini_output: No JSON object markers found in preview: {text[:200]}")
+    else: logger.warning(f"clean_ai_output: No JSON object markers found in preview: {text[:200]}")
     text = re.sub(r'[\x00-\x1F\x7F]', '', text) # Remove control chars
     text = re.sub(r',\s*([}\]])', r'\1', text) # Remove trailing commas
     return text
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def generate_report(resume_text: str, job_description: str, job_id: str, organization_id: str, user_id: str) -> dict:
-    """Generates analysis report using Gemini, includes detailed logging."""
+    """Generates analysis report using OpenAI, includes detailed logging."""
     attempt_id = os.urandom(4).hex()
     current_step = "init"
 
@@ -288,15 +279,14 @@ def generate_report(resume_text: str, job_description: str, job_id: str, organiz
     output_tokens = 0
     status = 'FAILURE'
     analysis_for_log = None
-    raw_gemini_text = ""
+    raw_ai_text = ""
     # --- END: MODIFICATION ---
     
     try:
         current_step = "log_start"; log_progress(job_id, f"generate_report_start_{attempt_id}", "Entering generate_report")
         current_step = "log_raw_inputs"; log_progress(job_id, f"generate_report_raw_inputs_{attempt_id}", "Raw input previews", {"resume_preview": resume_text[:200], "jd_preview": job_description[:200]})
-        current_step = "escape_inputs"; escaped_resume = resume_text.replace('{', '{{').replace('}', '}}'); escaped_job_desc = job_description.replace('{', '{{').replace('}', '}}'); log_progress(job_id, f"generate_report_escaped_{attempt_id}", "Inputs escaped")
-        current_step = "log_input_preview"; log_progress(job_id, f"generate_report_input_{attempt_id}", "Preparing prompt", {"resume_preview": escaped_resume[:1000], "jd_preview": escaped_job_desc[:1000]})
-
+        current_step = "log_input_preview"; log_progress(job_id, f"generate_report_input_{attempt_id}", "Preparing prompt", {"resume_preview": resume_text[:1000], "jd_preview": job_description[:1000]})
+        
         prompt_template = """
 Analyze this resume against the job description and return ONLY a valid JSON response with:
 - overall_match_score (percentage, 0-100)
@@ -361,7 +351,7 @@ For companies:
 Use symbols: ✅ for 'yes', ⚠ for 'partial', ❌ for 'no'. IMPORTANT: Ensure the output is ONLY a single, valid JSON object. All string values within the JSON must be properly escaped according to JSON standards (e.g., use \\" for quotes inside strings, \\\\ for backslashes, etc.).
 """ # Keep prompt concise here, assume details are known by model or adjust if needed
         current_step = "before_format"; log_progress(job_id, f"generate_report_before_format_{attempt_id}", "Formatting prompt")
-        prompt = prompt_template.format(job_description=escaped_job_desc, resume_text=escaped_resume)
+        prompt = prompt_template.format(job_description=job_description, resume_text=resume_text)
         current_step = "after_format"; log_progress(job_id, f"generate_report_after_format_{attempt_id}", "Prompt formatted", {"prompt_preview": prompt[:500]})
 
         current_step = "before_api_call"; log_progress(job_id, f"generate_report_before_api_call_{attempt_id}", "Calling OpenAI API")
@@ -426,7 +416,7 @@ Use symbols: ✅ for 'yes', ⚠ for 'partial', ❌ for 'no'. IMPORTANT: Ensure t
         return report
 
     except Exception as e:
-        safe_raw_text = json.dumps(raw_gemini_text) # Safely encode the raw text as a JSON string
+        safe_raw_text = json.dumps(raw_ai_text) # Safely encode the raw text as a JSON string
         analysis_for_log = {
             "error": str(e), 
             "failed_step": current_step, 
@@ -440,7 +430,7 @@ Use symbols: ✅ for 'yes', ⚠ for 'partial', ❌ for 'no'. IMPORTANT: Ensure t
     finally:
         try:
             if organization_id and user_id:
-                log_progress(job_id, f"log_gemini_usage_{attempt_id}", "Logging Gemini usage to database")
+                log_progress(job_id, f"log_ai_usage_{attempt_id}", "Logging AI usage to database")
                 supabase.from_('hr_gemini_usage_log').insert({
                     "organization_id": organization_id,
                     "created_by": user_id,
@@ -452,10 +442,10 @@ Use symbols: ✅ for 'yes', ⚠ for 'partial', ❌ for 'no'. IMPORTANT: Ensure t
                      "usage_type": 'resume_validation_openai'
                 }).execute()
             else:
-                log_progress(job_id, f"log_gemini_usage_skipped_{attempt_id}", "Skipping usage logging due to missing org/user ID")
+                log_progress(job_id, f"log_ai_usage_skipped_{attempt_id}", "Skipping usage logging due to missing org/user ID")
         except Exception as log_db_e:
             logger.error(f"Job {job_id} - FAILED_TO_LOG_USAGE: Could not write to hr_gemini_usage_log. Error: {log_db_e}")
-            log_progress(job_id, f"log_gemini_usage_error_{attempt_id}", "Failed to log usage to DB", {"error": str(log_db_e)})
+            log_progress(job_id, f"log_ai_usage_error_{attempt_id}", "Failed to log usage to DB", {"error": str(log_db_e)})
         
 
 def save_report_as_pdf(report: dict, output_path: str, job_id: str):
@@ -593,7 +583,7 @@ def process_analysis(job_id: str, candidate_id: str, resume_path: str, job_descr
     
         log_progress(job_id, "download_resume", f"Attempting download: {resume_path}")
         try:
-            local_resume_path = download_resume(resume_path)
+            local_resume_path = download_resume(resume_path, job_id)
             log_progress(job_id, "download_resume_success", "Resume downloaded", {"local": local_resume_path, "size": os.path.getsize(local_resume_path) if local_resume_path and os.path.exists(local_resume_path) else -1})
         except FileNotFoundInStorageError as resume_not_found_err:
             log_progress(job_id, "error_resume_not_found", f"STOPPING TASK - Resume not found: {resume_path}. No DB changes.")
